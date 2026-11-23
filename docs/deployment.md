@@ -1,13 +1,13 @@
 # Deployment
 
-Witness runs as two containers, defined in [`deploy/docker-compose.yml`](../deploy/docker-compose.yml).
+Witness runs as its own compose project, **witness**, with two containers. Both are defined in [`deploy/docker-compose.yml`](../deploy/docker-compose.yml). It does not need to share a compose project with any broker or Timebase component.
 
 | Service | Image | Role |
 | --- | --- | --- |
-| `witness` (container `witness-web`) | `caddy:2-alpine` | Serves `site/` on port 8088. Proxies `/api/*` and `/briefs/*` to the gateway; agent streams are not buffered |
-| `lookout-gateway` | built from `gateway/` | Connections, live stream, Move to Timebase and handoff files, on port 8090 inside the network |
+| `web` (container `witness-web`) | `caddy:2-alpine` | Serves `site/` on port 8088. Proxies `/api/*` and `/briefs/*` to the gateway; agent streams are not buffered |
+| `gateway` (container `witness-gateway`, image `witness-gateway:current`) | built from `gateway/` | Connections, live stream, Move to Timebase and handoff files, on port 8090 inside the network |
 
-Keep the gateway's service and host name `lookout-gateway`. Caddy proxies to it, and the URLs inside handoffs point at it.
+The gateway also answers to the network alias `lookout-gateway`, on both networks. The URLs inside handoffs point at that name, so keep the alias.
 
 ## Networks
 
@@ -49,21 +49,8 @@ Restart the gateway after adding or replacing the key. Secrets saved with an old
 ## Updating
 
 - **Page only:** copy `site/` to the folder Caddy serves. Caddy sends no-cache headers, so a browser refresh picks up the change.
-- **Gateway:**
-
-  ```bash
-  docker compose build lookout-gateway
-  docker compose up -d lookout-gateway
-  ```
-
-  Bump the image tag in the compose file when you release a new version.
-
-  On a host where image pulls fail over SSH (for example a Mac whose keychain is locked), build on another machine and copy the image across:
-
-  ```bash
-  docker buildx build --platform linux/arm64 -t lookout-gateway:<ver> --load gateway/
-  docker save lookout-gateway:<ver> | ssh <host> docker load
-  ```
+- **Everything, from git:** run `deploy/update.sh`. It pulls the latest code, which updates the page in place. It rebuilds and restarts the gateway only when `gateway/` changed; add `--rebuild` to force it. Each build is also tagged `witness-gateway:git-<commit>`, and the script prints the command to roll back.
+- **Host-specific settings** go in `deploy/update.local.env`, which git ignores. For example, set `DOCKER=/path/to/docker` when `docker` is not on the PATH. On a Mac where image pulls fail over SSH because the keychain is locked, set `DOCKER_CONFIG` to a Docker config folder that has no `credsStore`; public base images don't need credentials.
 
 ## Backups
 

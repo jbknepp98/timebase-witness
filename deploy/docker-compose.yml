@@ -1,8 +1,10 @@
-# Witness: web page (Caddy) + gateway. Optional Mosquitto broker for a self-contained lab.
-# Run from this folder:  docker compose up -d
-# The page is then at http://<host>:8088
+# Timebase Witness: its own compose project (web page + gateway).
+# Run from this folder:  docker compose up -d --build     Page: http://<host>:8088
+# Data, key and env files live next to this file and are git-ignored.
+name: witness
+
 services:
-  witness:
+  web:
     image: caddy:2-alpine
     container_name: witness-web
     restart: unless-stopped
@@ -11,29 +13,31 @@ services:
     volumes:
       - ../site:/srv:ro
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on: [gateway]
 
-  lookout-gateway:                 # host name is used by Caddy and by handoff URLs; keep it
+  gateway:
     build: ../gateway
-    image: lookout-gateway:2.1.1
-    container_name: lookout-gateway
+    image: witness-gateway:current
+    container_name: witness-gateway
     restart: unless-stopped
     env_file:
-      - gateway.env                # optional first-start seed (OPCUA_SERVERS / MQTT_BROKERS)
-      - agent.env                  # ANTHROPIC_API_KEY for Move to Timebase
+      - path: gateway.env          # optional first-start seed (OPCUA_SERVERS / MQTT_BROKERS)
+        required: false
+      - path: agent.env            # ANTHROPIC_API_KEY for Move to Timebase
+        required: false
     volumes:
       - ./briefs:/data/briefs              # saved handoffs
       - ./lookout-data:/data/lookout       # connections.json (secrets encrypted) + OPC UA client certificate
       - ./lookout-secret:/run/lookout:ro   # master.key that encrypts stored secrets
-    networks: [default, timebase]
-
-  # Optional: a local broker to point Witness at.
-  # mosquitto:
-  #   image: eclipse-mosquitto:2.1.4
-  #   restart: unless-stopped
-  #   ports: ["1883:1883", "9001:9001"]
+    networks:
+      default:
+        aliases: [lookout-gateway]
+      timebase:
+        # Gage in Collector/Atlas fetches handoffs from http://lookout-gateway:8090 - keep this alias.
+        aliases: [lookout-gateway]
 
 networks:
   default: {}
-  timebase:                        # the Timebase stack's network, so Collector/Atlas can fetch handoffs
+  timebase:                        # the Timebase stack's network; change the name to match yours
     name: timebase-2-0-beta_default
     external: true

@@ -52,6 +52,8 @@ sudo chown -R 1000:1000 briefs lookout-data lookout-secret
 docker compose up -d --build
 ```
 
+Witness runs as its own compose project, `witness`, with containers `witness-web` and `witness-gateway`. To update it later, run `deploy/update.sh`.
+
 Open `http://<host>:8088`, choose **Add connection**, and test it before saving. If you are not running Timebase, remove the `timebase` network from `deploy/docker-compose.yml` first.
 
 ## Documentation
@@ -71,4 +73,4 @@ There is an example Atlas handoff from the DemoPlant simulator in [examples/demo
 
 - Witness has **no login yet**. Anyone who can open the page can add, edit or delete connections, though never read their secrets. Keep it on a trusted network.
 - Move to Timebase supports OPC UA. MQTT namespaces are not planned yet.
-- Witness was called Lookout until November 2026. Some internal names still use the old spelling because handoffs, certificates and volumes depend on them. These are the `lookout-gateway` host, the `LOOKOUT_*` variables, the `lookout-*` folders, and the OPC UA application URI `urn:flow-software:lookout-gateway`.
+- Witness was called Lookout until November 2026. Some internal names still use the old spelling because handoffs, certificates and volumes depend on them. These are the `lookout-gateway` network alias, the `LOOKOUT_*` variables, the `lookout-*` folders, and the OPC UA application URI `urn:flow-software:lookout-gateway`.

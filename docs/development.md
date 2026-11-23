@@ -14,7 +14,7 @@ gateway/              Python 3.12 (aiohttp, asyncua, aiomqtt, anthropic)
   connections.py      connection store, secret encryption, MQTT and OPC UA sessions
   atlas_mapper.py     Move to Timebase: agent tools, namespace profile, Collector validation, handoff writers
   Dockerfile
-deploy/               docker-compose.yml, Caddyfile, example env files
+deploy/               the witness compose project: docker-compose.yml, Caddyfile, update.sh, example env files
 examples/             a sample Atlas handoff
 dev_server.py         local preview server
 ```
@@ -31,10 +31,10 @@ python3 dev_server.py                        # http://127.0.0.1:8790
 ## Gateway
 
 ```bash
-docker build -t lookout-gateway:dev gateway/
+docker build -t witness-gateway:dev gateway/
 ```
 
-The dependencies are pinned in the Dockerfile. The gateway logs to stdout; follow it with `docker logs -f lookout-gateway`.
+The dependencies are pinned in the Dockerfile. The gateway logs to stdout; follow it with `docker logs -f witness-gateway`.
 
 ## Look and feel
 
