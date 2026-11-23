@@ -13,8 +13,8 @@
 | --- | --- |
 | Select a row | Open that connection in its own tab |
 | Select the arrow at the end of a row | Show its settings summary and 5-minute live status without leaving the list |
-| Select the pencil | Edit it (see [Connections and security](connections-and-security.md)) |
-| Choose **Add connection** | Create a broker or server connection. The **Type** dropdown switches between MQTT and OPC UA |
+| Select the pencil | Edit it in the side panel (see [Connections and security](connections-and-security.md)) |
+| Choose **Add connection** | Create a broker or server connection in the same panel. The **Type** dropdown switches between MQTT and OPC UA |
 
 ## Connection tabs
 

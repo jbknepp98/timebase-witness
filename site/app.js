@@ -11,6 +11,7 @@
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   // Lucide icons (the Timebase apps use lucide-react)
   const ICON = {
+    info: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>',
     chevronRight: '<path d="m9 18 6-6-6-6"/>',
     chevronLeft: '<path d="m15 18-6-6 6-6"/>',
     search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
@@ -361,7 +362,7 @@
     S.connsLoaded = true;
     const gone = S.tabs.filter((t) => isConnView(t) && !connOf(t));
     if (gone.length) { S.tabs = S.tabs.filter((t) => !gone.includes(t)); gone.forEach((t) => S.lens.delete(t)); }
-    renderFoot();
+    if (S.view === 'conn') renderConnections();
     if (S.pendingLegacy && resolveLegacy()) return;
     if (gone.includes(S.view)) { go('conn'); return; }
     if (isConnView(S.view) && !lensOf(S.view).bound) { go(S.view, false); return; }
@@ -411,7 +412,7 @@
     }
     for (const v of m.values || []) applyUa(s, v, true);
     c.treeDirty = true; c.viewDirty = true;
-    renderFoot();
+    if (S.view === 'conn') renderConnections();
     if (S.view === 'atlas' && !S.agent.server) buildPage();
   }
   function applyUa(s, item, initial) {
@@ -439,14 +440,14 @@
   function connectUa() {
     if (!uaUrl) return;
     try { uaSocket = new WebSocket(uaUrl); } catch { scheduleUa(); return; }
-    S.uaSocket = 'connecting'; renderFoot();
-    uaSocket.onopen = () => { uaBackoff = 1000; S.uaSocket = 'open'; renderFoot(); };
+    S.uaSocket = 'connecting';
+    uaSocket.onopen = () => { uaBackoff = 1000; S.uaSocket = 'open'; };
     uaSocket.onmessage = (e) => {
       let m; try { m = JSON.parse(e.data); } catch { return; }
       if (m.type === 'connections') onConnections(m.items);
       else if (m.type === 'servers') m.servers.forEach(serverFor);
       else if (m.type === 'model') onUaModel(m);
-      else if (m.type === 'status') { if (m.kind === 'mqtt') brokerFor(m); else serverFor(m); renderFoot(); }
+      else if (m.type === 'status') { if (m.kind === 'mqtt') brokerFor(m); else serverFor(m); if (S.view === 'conn') renderConnections(); }
       else if (m.type === 'values') { const sv = SERVERS.get(m.server); if (sv) m.items.forEach((it) => applyUa(sv, it, false)); }
       else if (m.type === 'mqtt' || m.type === 'mqtt_snapshot') { const b = BROKERS.find((x) => x.id === m.conn); if (b) m.msgs.forEach((x) => onMqtt(b, x, m.type === 'mqtt_snapshot')); }
       else if (m.type === 'removed') {
@@ -454,10 +455,10 @@
           const b = BROKERS.find((x) => x.id === m.id); if (b) { dropBranch(CTX.mqtt, b.name); b.sys = {}; }
           const sv = SERVERS.get(m.id); if (sv) { dropBranch(CTX.ua, sv.name); sv.index = new Map(); }
         } else removeConn(m.id);
-        renderFoot(); if (S.view === 'conn') renderConnections();
+        if (S.view === 'conn') renderConnections();
       }
     };
-    uaSocket.onclose = () => { S.uaSocket = 'closed'; renderFoot(); scheduleUa(); };
+    uaSocket.onclose = () => { S.uaSocket = 'closed'; scheduleUa(); };
     uaSocket.onerror = () => { try { uaSocket.close(); } catch { /* ignore */ } };
   }
   function scheduleUa() { setTimeout(connectUa, uaBackoff); uaBackoff = Math.min(uaBackoff * 2, 30000); }
@@ -880,24 +881,46 @@
       : `<div class="empty-state">${icon('plug')}<h2>${S.connFilter ? 'Nothing matches the filter' : 'No connections'}</h2></div>`;
   }
 
-  // ---------------------------------------------------------------- Add / edit connection dialog
+  // ---------------------------------------------------------------- Add / edit connection panel
+  // Same edit panel as the other Timebase 2.0 apps (Historian "Edit dataset"): a 450px card floating over the
+  // right of the page, draggable by its header, label | value | info rows, Discard / Save in the header and
+  // "N pending" + Delete in the footer. The page behind it stays usable.
   const DLG_DEFAULTS = {
     mqtt: { host: '', port: 1883, transport: 'tcp', wsPath: '/', protocol: '3.1.1', clientId: '', username: '', tls: false, tlsVerify: true, caPem: '', clientCertPem: '', topics: ['#'], includeSys: true },
     opcua: { endpoint: 'opc.tcp://', securityPolicy: 'None', securityMode: 'None', auth: 'anonymous', username: '', serverCertThumbprint: '', browseRoots: [], connector: '', publishMs: 500 },
   };
   let D = null;
+  const snap = () => JSON.stringify({ kind: D.kind, name: D.name, enabled: D.enabled, settings: D.settings });
+  function pendingCount() {
+    if (!D) return 0;
+    const a = JSON.parse(D.orig); const b = JSON.parse(snap());
+    let n = 0;
+    if (a.kind !== b.kind) n++;
+    if (a.name !== b.name) n++;
+    if (a.enabled !== b.enabled) n++;
+    const keys = new Set([...Object.keys(a.settings), ...Object.keys(b.settings)]);
+    keys.forEach((k) => { if (JSON.stringify(a.settings[k]) !== JSON.stringify(b.settings[k])) n++; });
+    return n + Object.keys(D.secrets).length;
+  }
+  function confirmDiscard() {
+    const n = pendingCount();
+    return !n || window.confirm(`Discard ${n} unsaved ${n === 1 ? 'change' : 'changes'} to "${D.name || 'the new connection'}"?`);
+  }
   async function openConnDialog(id) {
+    if (D && !confirmDiscard()) return;
     let list;
     try { list = await (await fetch(`${apiBase}/api/connections`, { cache: 'no-store' })).json(); } catch { window.alert('The Witness gateway is not reachable.'); return; }
     const rec = id ? list.items.find((x) => x.id === id) : null;
     const kind = rec ? rec.kind : 'mqtt';
+    const pos = D ? D.pos : null;
     D = { id, kind, meta: list.meta, name: rec ? rec.name : '', enabled: rec ? rec.enabled !== false : true,
       settings: JSON.parse(JSON.stringify(rec ? rec.settings : DLG_DEFAULTS[kind])), secrets: {}, secretsSet: rec ? rec.secretsSet || {} : {},
-      errors: {}, test: null, disc: null, busy: '' };
+      errors: {}, test: null, disc: null, busy: '', tip: null, pos };
+    D.orig = snap();
     renderDialog();
-    const first = document.querySelector('#modal [data-f="name"]'); if (first) first.focus();
+    const first = document.querySelector('#modal [data-f="name"]'); if (first && !id) first.focus();
   }
-  function closeDialog() { D = null; renderDialog(); }
+  function closeDialog(force) { if (!force && D && !confirmDiscard()) return; D = null; renderDialog(); }
   function dlgPayload() { return { kind: D.kind, id: D.id || undefined, name: D.name, enabled: D.enabled, settings: D.settings, secrets: D.secrets }; }
   function setField(path, value) {
     if (path === 'name' || path === 'enabled') { D[path] = value; return; }
@@ -912,63 +935,69 @@
     if (el.dataset.num) v = el.value === '' ? '' : Number(el.value);
     setField(path, v);
     const key = path.split('.').pop(); if (D.errors[key]) { delete D.errors[key]; }
-    if (el.dataset.rerender) renderDialog();
+    if (el.dataset.rerender) renderDialog(); else updateChrome();
   }
-  const dErr = (k) => (D.errors[k] ? `<span class="fld-e">${esc(D.errors[k])}</span>` : '');
+  const plain = (html) => String(html || '').replace(/<[^>]+>/g, '');
+  // one row: label | control | info. opts.wide puts the control on its own full-width line under the label.
   function fld(label, key, inner, opts = {}) {
-    return `<label class="fld${opts.wide ? ' wide' : ''}${D.errors[key] ? ' has-e' : ''}"><span class="fld-l">${esc(label)}${opts.opt ? ' <i>optional</i>' : ''}</span>${inner}${opts.help ? `<span class="fld-h">${opts.help}</span>` : ''}${dErr(key)}</label>`;
+    const info = opts.help ? `<button type="button" class="ed-info${D.tip === key ? ' on' : ''}" data-act="dlgtip" data-k="${esc(key)}" title="${esc(plain(opts.help))}" aria-label="Help for ${esc(label)}">${icon('info', 'ic-sm')}</button>` : '<span></span>';
+    const lab = `<div class="ed-l${D.errors[key] ? ' has-e' : ''}"><label title="${esc(label)}">${esc(label)}</label>${opts.opt ? '<i>optional</i>' : ''}</div>`;
+    const err = D.errors[key] ? `<div class="ed-e">${esc(D.errors[key])}</div>` : '';
+    const tip = D.tip === key && opts.help ? `<div class="ed-tip">${opts.help}</div>` : '';
+    const cls = `ed-c${D.errors[key] ? ' has-e' : ''}`;
+    return opts.wide
+      ? `<div class="ed-wl">${lab}${info.replace('class="ed-info', 'class="ed-info short')}</div>${tip}<div class="${cls} full">${inner}</div>${err.replace('ed-e', 'ed-e full')}`
+      : `${lab}<div class="${cls}">${inner}</div>${info}${tip}${err}`;
   }
+  const sec = (title) => `<div class="ed-sec">${esc(title)}</div>`;
+  const full = (html) => (html ? `<div class="ed-full">${html}</div>` : '');
   const inp = (path, value, attrs = '') => `<input class="inp" data-f="${path}" value="${esc(value ?? '')}" spellcheck="false" autocomplete="off" ${attrs}>`;
   const sel = (path, value, options, attrs = '') => `<select class="inp" data-f="${path}" ${attrs}>${options.map(([v, l]) => `<option value="${esc(v)}"${String(v) === String(value) ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
   const chk = (path, value, label, attrs = '') => `<label class="chk"><input type="checkbox" data-f="${path}"${value ? ' checked' : ''} ${attrs}><span>${esc(label)}</span></label>`;
-  function pemArea(path, value, placeholder, isSecret) {
+  const toggle = (label, key, path, value, help, attrs = '') => fld(label, key, `<label class="ed-sw"><input type="checkbox" data-f="${path}" data-rerender="1"${value ? ' checked' : ''} ${attrs.replace('data-rerender="1"', '')}><span>${value ? 'On' : 'Off'}</span></label>`, { help });
+  function pemArea(path, value, placeholder) {
     return `<div class="pem"><textarea class="inp mono" rows="4" data-f="${path}" spellcheck="false" placeholder="${esc(placeholder)}">${esc(value || '')}</textarea>
-      <label class="btn btn-outline pem-load">${icon('download', 'ic-sm')}Load file<input type="file" data-file="${path}" accept=".pem,.crt,.cer,.key,.txt" hidden></label>${isSecret ? '' : ''}</div>`;
+      <label class="btn btn-outline pem-load">${icon('download', 'ic-sm')}Load file<input type="file" data-file="${path}" accept=".pem,.crt,.cer,.key,.txt" hidden></label></div>`;
   }
   function storageNote() {
     const st = D.meta.storage;
-    return st.encrypted
+    return full(st.encrypted
       ? `<div class="notice ok">${icon('lock', 'ic-sm')}<span><b>Encrypted at rest.</b> ${esc(st.detail)}</span></div>`
-      : `<div class="notice warn">${icon('alert', 'ic-sm')}<span><b>Passwords will be stored as plain text.</b> ${esc(st.detail)}</span></div>`;
+      : `<div class="notice warn">${icon('alert', 'ic-sm')}<span><b>Passwords will be stored as plain text.</b> ${esc(st.detail)}</span></div>`);
   }
   function secretInput(path, key, label, opts = {}) {
     const isSet = D.secretsSet[key];
     const how = D.meta.storage.encrypted ? 'encrypted' : 'plain text';
-    const ph = isSet ? `Stored (${how}). Leave blank to keep it.` : (opts.placeholder || '');
+    const ph = isSet ? `Stored (${how}). Blank keeps it.` : (opts.placeholder || '');
     const clearKey = `clear${key[0].toUpperCase()}${key.slice(1)}`;
     const control = opts.pem
-      ? pemArea(path, D.secrets[key] || '', ph || '-----BEGIN PRIVATE KEY-----', true)
+      ? pemArea(path, D.secrets[key] || '', ph || '-----BEGIN PRIVATE KEY-----')
       : `<input class="inp" type="password" data-f="${path}" value="${esc(D.secrets[key] || '')}" placeholder="${esc(ph)}" autocomplete="new-password">`;
-    return fld(label, key, control + (isSet ? chk(`x.${clearKey}`, !!D.secrets[clearKey], `Remove the stored ${opts.noun || 'password'}`) : ''), { opt: opts.opt });
+    return fld(label, key, control + (isSet ? chk(`x.${clearKey}`, !!D.secrets[clearKey], `Remove the stored ${opts.noun || 'password'}`) : ''), { opt: opts.opt, wide: opts.pem, help: opts.help });
   }
   function mqttForm() {
-    const v = D.settings;
-    return `<div class="dlg-sec"><div class="lbl">Connection</div><div class="fgrid">
-        ${fld('Host', 'host', inp('s.host', v.host, 'placeholder="broker.plant.local or 10.0.0.5"'))}
-        ${fld('Port', 'port', inp('s.port', v.port, 'data-num="1" inputmode="numeric"'))}
-        ${fld('Transport', 'transport', sel('s.transport', v.transport, [['tcp', 'MQTT (TCP)'], ['websockets', 'MQTT over WebSockets']], 'data-rerender="1"'))}
-        ${v.transport === 'websockets' ? fld('WebSocket path', 'wsPath', inp('s.wsPath', v.wsPath, 'placeholder="/"')) : fld('Protocol', 'protocol', sel('s.protocol', v.protocol, [['3.1.1', 'MQTT 3.1.1'], ['5', 'MQTT 5']]))}
-        ${v.transport === 'websockets' ? fld('Protocol', 'protocol', sel('s.protocol', v.protocol, [['3.1.1', 'MQTT 3.1.1'], ['5', 'MQTT 5']])) : ''}
-        ${fld('Client ID', 'clientId', inp('s.clientId', v.clientId, 'placeholder="lookout-… (generated)"'), { opt: true })}
-      </div></div>
-      <div class="dlg-sec"><div class="lbl">Authentication</div><div class="fgrid">
-        ${fld('User name', 'username', inp('s.username', v.username, 'placeholder="blank for anonymous"'), { opt: true })}
+    const v = D.settings; const ws = v.transport === 'websockets';
+    return `${sec('Connection')}
+        ${fld('Host', 'host', inp('s.host', v.host, 'placeholder="broker.plant.local"'), { help: 'Host name or IP address of the broker, as the Witness gateway sees it.' })}
+        ${fld('Port', 'port', inp('s.port', v.port, 'data-num="1" inputmode="numeric"'), { help: '1883 for MQTT, 8883 for MQTT over TLS, often 9001 or 8080 for WebSockets.' })}
+        ${fld('Transport', 'transport', sel('s.transport', v.transport, [['tcp', 'MQTT (TCP)'], ['websockets', 'WebSockets']], 'data-rerender="1"'))}
+        ${ws ? fld('WebSocket path', 'wsPath', inp('s.wsPath', v.wsPath, 'placeholder="/"')) : ''}
+        ${fld('Protocol', 'protocol', sel('s.protocol', v.protocol, [['3.1.1', 'MQTT 3.1.1'], ['5', 'MQTT 5']]))}
+        ${fld('Client ID', 'clientId', inp('s.clientId', v.clientId, 'placeholder="generated"'), { opt: true, help: 'Leave blank and Witness generates one. Two clients with the same ID disconnect each other.' })}
+      ${sec('Authentication')}
+        ${fld('User name', 'username', inp('s.username', v.username, 'placeholder="blank = anonymous"'), { opt: true })}
         ${secretInput('x.password', 'password', 'Password', { opt: true })}
-      </div>${storageNote()}</div>
-      <div class="dlg-sec"><div class="lbl">Security</div>
-        ${chk('s.tls', v.tls, 'Use TLS (usually port 8883)', 'data-rerender="1"')}
-        ${v.tls ? `${chk('s.tlsVerify', v.tlsVerify, 'Verify the broker\'s certificate and host name', 'data-rerender="1"')}
-          ${v.tlsVerify ? '' : `<div class="notice warn">${icon('alert', 'ic-sm')}<span>Without verification the connection is encrypted but Witness cannot tell whether it is talking to the real broker. Use only on a lab network.</span></div>`}
-          <div class="fgrid one">
-          ${fld('CA certificate', 'caPem', pemArea('s.caPem', v.caPem, '-----BEGIN CERTIFICATE-----  (blank = the system\'s trusted CAs)'), { opt: true, help: 'The certificate authority that signed the broker\'s certificate.' })}
-          ${fld('Client certificate', 'clientCertPem', pemArea('s.clientCertPem', v.clientCertPem, '-----BEGIN CERTIFICATE-----'), { opt: true, help: 'Only if the broker requires clients to present a certificate.' })}
-          ${secretInput('x.clientKeyPem', 'clientKeyPem', 'Client private key', { pem: true, opt: true, noun: 'private key' })}
-          </div>` : ''}
-      </div>
-      <div class="dlg-sec"><div class="lbl">Topics</div>
+        ${storageNote()}
+      ${sec('Security')}
+        ${toggle('TLS', 'tls', 's.tls', v.tls, 'Encrypt the connection. Brokers usually listen for TLS on port 8883.', 'data-rerender="1"')}
+        ${v.tls ? `${toggle('Verify certificate', 'tlsVerify', 's.tlsVerify', v.tlsVerify, 'Check the broker\'s certificate and host name against the CA certificate below (or the system\'s trusted CAs).', 'data-rerender="1"')}
+          ${v.tlsVerify ? '' : full(`<div class="notice warn">${icon('alert', 'ic-sm')}<span>Without verification the connection is encrypted but Witness cannot tell whether it is talking to the real broker. Use only on a lab network.</span></div>`)}
+          ${fld('CA certificate', 'caPem', pemArea('s.caPem', v.caPem, '-----BEGIN CERTIFICATE-----  (blank = system CAs)'), { wide: true, opt: true, help: 'The certificate authority that signed the broker\'s certificate.' })}
+          ${fld('Client certificate', 'clientCertPem', pemArea('s.clientCertPem', v.clientCertPem, '-----BEGIN CERTIFICATE-----'), { wide: true, opt: true, help: 'Only if the broker requires clients to present a certificate.' })}
+          ${secretInput('x.clientKeyPem', 'clientKeyPem', 'Client private key', { pem: true, opt: true, noun: 'private key', help: 'The private key for the client certificate. Stored encrypted.' })}` : ''}
+      ${sec('Topics')}
         ${fld('Subscribe to', 'topics', `<textarea class="inp mono" rows="3" data-f="s.topics" data-list="1" spellcheck="false" placeholder="#">${esc((v.topics || []).join('\n'))}</textarea>`, { wide: true, help: 'One filter per line. <code>+</code> matches one level, <code>#</code> matches everything below. Witness only reads; it never publishes.' })}
-        ${chk('s.includeSys', v.includeSys, 'Also subscribe to the broker\'s $SYS statistics')}
-      </div>`;
+        ${toggle('$SYS statistics', 'includeSys', 's.includeSys', v.includeSys, 'Also subscribe to the broker\'s own $SYS statistics topics.')}`;
   }
   function opcuaForm() {
     const v = D.settings; const cc = D.meta.clientCert || {};
@@ -983,65 +1012,94 @@
         return `<button type="button" class="ep${on ? ' on' : ''}" data-act="dlgpickep" data-i="${i}"><b>${esc(x.policy === 'None' ? 'No security' : x.policy)}</b><span>${esc(x.policy === 'None' ? 'unencrypted' : x.mode === 'SignAndEncrypt' ? 'sign and encrypt' : 'sign only')} · ${esc(x.userTokens.join(', ') || 'no user tokens')}</span></button>`;
       }).join('')}</div>${tp ? chk('pin', v.serverCertThumbprint === tp, `Trust only this server certificate (${tp.slice(0, 12)}…)`, 'data-act-pin="' + tp + '"') : ''}`;
     }
-    return `<div class="dlg-sec"><div class="lbl">Connection</div>
-        <div class="fgrid"><div class="wide row-inline">${fld('Endpoint URL', 'endpoint', inp('s.endpoint', v.endpoint, 'placeholder="opc.tcp://plc01.plant.local:4840"'), { wide: true })}
-          <button class="btn btn-outline" data-act="dlgdiscover">${icon('search', 'ic-sm')}Discover</button></div></div>
-        ${discHtml}
-      </div>
-      <div class="dlg-sec"><div class="lbl">Security</div><div class="fgrid">
-        ${fld('Security policy', 'securityPolicy', sel('s.securityPolicy', v.securityPolicy, (D.meta.policies || ['None']).map((x) => [x, x === 'None' ? 'None (unencrypted)' : x]), 'data-rerender="1"'))}
-        ${fld('Message security', 'securityMode', sel('s.securityMode', v.securityPolicy === 'None' ? 'None' : v.securityMode, v.securityPolicy === 'None' ? [['None', 'None']] : [['SignAndEncrypt', 'Sign and encrypt'], ['Sign', 'Sign only']], v.securityPolicy === 'None' ? 'disabled' : ''))}
-        ${fld('Trusted server certificate', 'serverCertThumbprint', inp('s.serverCertThumbprint', v.serverCertThumbprint, 'placeholder="SHA-1 thumbprint; blank accepts any certificate"'), { wide: true, opt: true, help: 'When set, Witness refuses to connect if the server presents a different certificate.' })}
-        </div>
-        ${v.securityPolicy !== 'None' ? `<div class="notice">${icon('lock', 'ic-sm')}<span><b>Witness's client certificate</b> <code>${esc(cc.thumbprint || '')}</code> · valid until ${esc((cc.notAfter || '').slice(0, 10))}.
-          If the server rejects Witness, add this certificate to the server's trusted clients. <a href="${apiBase}/api/opcua/client-cert.der" download>Download certificate</a></span></div>` : `<div class="notice warn">${icon('alert', 'ic-sm')}<span>With no security, values and the user name and password cross the network unencrypted. Choose a policy if the server offers one.</span></div>`}
-      </div>
-      <div class="dlg-sec"><div class="lbl">Authentication</div>
-        <div class="seg">${[['anonymous', 'Anonymous'], ['username', 'User name and password']].map(([k, l]) => `<button type="button" class="${v.auth === k ? 'on' : ''}" data-act="dlgauth" data-v="${k}">${l}</button>`).join('')}</div>
-        ${v.auth === 'username' ? `<div class="fgrid">${fld('User name', 'username', inp('s.username', v.username))}${secretInput('x.password', 'password', 'Password')}</div>${storageNote()}` : ''}
-      </div>
-      <div class="dlg-sec"><div class="lbl">Browse</div><div class="fgrid">
+    const none = v.securityPolicy === 'None';
+    return `${sec('Connection')}
+        ${fld('Endpoint URL', 'endpoint', `<div class="ed-inline">${inp('s.endpoint', v.endpoint, 'placeholder="opc.tcp://plc01.plant.local:4840"')}<button class="btn btn-outline btn-sm" data-act="dlgdiscover" title="List the server's security policies and login types">${icon('search', 'ic-sm')}Discover</button></div>`, { wide: true, help: 'The server\'s <code>opc.tcp://</code> address. <b>Discover</b> lists the security policies and login types it offers; select one to use it.' })}
+        ${full(discHtml)}
+      ${sec('Security')}
+        ${fld('Security policy', 'securityPolicy', sel('s.securityPolicy', v.securityPolicy, (D.meta.policies || ['None']).map((x) => [x, x === 'None' ? 'None' : x]), 'data-rerender="1"'), { help: 'How messages are signed and encrypted. None sends everything, including the password, in clear text.' })}
+        ${fld('Message security', 'securityMode', sel('s.securityMode', none ? 'None' : v.securityMode, none ? [['None', 'None']] : [['SignAndEncrypt', 'Sign and encrypt'], ['Sign', 'Sign only']], none ? 'disabled' : ''))}
+        ${fld('Server thumbprint', 'serverCertThumbprint', inp('s.serverCertThumbprint', v.serverCertThumbprint, 'placeholder="any certificate"'), { opt: true, help: 'SHA-1 thumbprint of the server certificate to trust. When set, Witness refuses to connect if the server presents a different certificate. Blank accepts any certificate.' })}
+        ${full(!none ? `<div class="notice">${icon('lock', 'ic-sm')}<span><b>Witness's client certificate</b> <code>${esc((cc.thumbprint || '').slice(0, 16))}…</code> · valid until ${esc((cc.notAfter || '').slice(0, 10))}. If the server rejects Witness, add it to the server's trusted clients. <a href="${apiBase}/api/opcua/client-cert.der" download>Download certificate</a></span></div>` : `<div class="notice warn">${icon('alert', 'ic-sm')}<span>With no security, values and the user name and password cross the network unencrypted. Choose a policy if the server offers one.</span></div>`)}
+      ${sec('Authentication')}
+        ${fld('Login', 'auth', sel('s.auth', v.auth, [['anonymous', 'Anonymous'], ['username', 'User and password']], 'data-rerender="1"'))}
+        ${v.auth === 'username' ? `${fld('User name', 'username', inp('s.username', v.username))}${secretInput('x.password', 'password', 'Password')}${storageNote()}` : ''}
+      ${sec('Browse')}
         ${fld('Branches to include', 'browseRoots', `<textarea class="inp mono" rows="2" data-f="s.browseRoots" data-list="1" spellcheck="false" placeholder="blank = everything under Objects">${esc((v.browseRoots || []).join('\n'))}</textarea>`, { wide: true, opt: true, help: 'One browse path per line, for example <code>DemoPlant/Processing</code>.' })}
-        ${fld('Publishing interval (ms)', 'publishMs', inp('s.publishMs', v.publishMs, 'data-num="1" inputmode="numeric"'))}
-        ${fld('Timebase Connect connector', 'connector', inp('s.connector', v.connector, 'placeholder="con_…"'), { opt: true, help: 'Used by Move to Timebase for Atlas binding paths.' })}
-      </div></div>`;
+        ${fld('Publishing (ms)', 'publishMs', inp('s.publishMs', v.publishMs, 'data-num="1" inputmode="numeric"'), { help: 'How often the server sends batches of value changes.' })}
+        ${fld('Connect connector', 'connector', inp('s.connector', v.connector, 'placeholder="con_…"'), { opt: true, help: 'The Timebase Connect connector for this server. Move to Timebase uses it for Atlas binding paths.' })}`;
   }
   function setDialogKind(kind) {
     if (!DLG_DEFAULTS[kind] || kind === D.kind) return;
-    D.kind = kind; D.settings = JSON.parse(JSON.stringify(DLG_DEFAULTS[kind])); D.secrets = {}; D.errors = {}; D.test = null; D.disc = null;
+    D.kind = kind; D.settings = JSON.parse(JSON.stringify(DLG_DEFAULTS[kind])); D.secrets = {}; D.errors = {}; D.test = null; D.disc = null; D.tip = null;
     renderDialog();
+  }
+  // header buttons and footer pill follow the pending count without rebuilding the form (keeps focus while typing)
+  function updateChrome() {
+    const root = $('#modal'); if (!root || !D) return;
+    const n = pendingCount(); const isNew = !D.id;
+    const pill = root.querySelector('.ed-pend'); if (pill) { pill.classList.toggle('on', n > 0); pill.lastChild.textContent = `${n} pending`; }
+    const save = root.querySelector('[data-act="dlgsave"]'); if (save) save.disabled = !!D.busy || (!isNew && !n);
+    const disc = root.querySelector('[data-act="dlgdiscard"]'); if (disc) disc.disabled = !!D.busy || !n;
+    const t = root.querySelector('.ed-title'); if (t) t.textContent = isNew ? `Add connection${D.name ? ` — ${D.name}` : ''}` : `Edit connection — ${D.name || 'Connection'}`;
+  }
+  function placePanel(el) {
+    if (!D.pos) { el.style.left = ''; el.style.top = ''; el.style.right = ''; return; }
+    const host = el.parentElement.getBoundingClientRect();
+    const x = Math.max(8, Math.min(D.pos.x, host.width - el.offsetWidth - 8));
+    const y = Math.max(64, Math.min(D.pos.y, host.height - 120));   // stay below the tab strip
+    el.style.left = `${x}px`; el.style.top = `${y}px`; el.style.right = 'auto';
+  }
+  function startDrag(ev, el) {
+    if (ev.button !== 0 || ev.target.closest('button, input, select, a')) return;
+    ev.preventDefault();
+    const host = el.parentElement.getBoundingClientRect(); const r = el.getBoundingClientRect();
+    const dx = ev.clientX - r.left; const dy = ev.clientY - r.top;
+    el.classList.add('dragging');
+    const move = (e) => { D.pos = { x: e.clientX - host.left - dx, y: e.clientY - host.top - dy }; placePanel(el); };
+    const up = () => { el.classList.remove('dragging'); window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
   }
 
   function renderDialog() {
     let root = $('#modal');
     if (!D) { if (root) root.remove(); return; }
-    if (!root) { root = document.createElement('div'); root.id = 'modal'; document.body.appendChild(root); }
-    const prev = root.querySelector('.dlg-body'); const scroll = prev ? prev.scrollTop : 0;
+    const host = document.querySelector('.main');
+    if (!root) { root = document.createElement('div'); root.id = 'modal'; host.appendChild(root); }
+    const prev = root.querySelector('.ed-body'); const scroll = prev ? prev.scrollTop : 0;
     const t = D.test;
     const testHtml = D.busy === 'test' ? `<div class="notice">${icon('radio', 'ic-sm')}<span>Testing the connection…</span></div>`
       : t ? `<div class="notice ${t.ok ? 'ok' : 'bad'}">${icon(t.ok ? 'check' : 'alert', 'ic-sm')}<span>${esc(t.message)}${t.sample && t.sample.length ? `<span class="chips" style="margin-top:6px">${t.sample.map((x) => `<span class="chip">${esc(x)}</span>`).join('')}</span>` : ''}</span></div>` : '';
     const errCount = Object.keys(D.errors).length;
-    root.innerHTML = `<div class="dlg-back"><div class="dlg" role="dialog" aria-modal="true" aria-label="${D.id ? 'Edit connection' : 'Add connection'}">
-      <div class="dlg-h"><div><div class="lbl">${D.id ? 'Edit connection' : 'Add connection'}</div><h2>${esc(D.id ? D.name || 'Connection' : 'New connection')}</h2></div>
-        <button class="icon-btn" data-act="dlgclose" title="Close">${icon('x')}</button></div>
-      <div class="dlg-body">
-        <div class="dlg-sec"><div class="fgrid">
-          ${fld('Type', 'kind', `<select class="inp" id="dlgKind"${D.id ? ' disabled title="The type of a saved connection cannot be changed"' : ''}>${[['mqtt', 'MQTT broker'], ['opcua', 'OPC UA server']].map(([k, l]) => `<option value="${k}"${D.kind === k ? ' selected' : ''}>${l}</option>`).join('')}</select>`)}
-          <div></div>
-          ${fld('Name', 'name', inp('name', D.name, `placeholder="${D.kind === 'mqtt' ? 'plant-broker' : 'line-1-plc'}"`), { help: 'Shown as the top branch in the tree.' })}
-          <div class="fld">${chk('enabled', D.enabled, 'Connected (uncheck to pause without deleting)')}</div>
-        </div></div>
-        ${D.kind === 'mqtt' ? mqttForm() : opcuaForm()}
-        ${testHtml}
-        ${errCount ? `<div class="notice bad">${icon('alert', 'ic-sm')}<span>Fix the ${errCount === 1 ? 'highlighted field' : `${errCount} highlighted fields`} before saving.</span></div>` : ''}
+    const isNew = !D.id;
+    root.innerHTML = `<div class="ed" role="dialog" aria-label="${isNew ? 'Add connection' : 'Edit connection'}">
+      <div class="ed-h" title="Drag to move">
+        <span class="ed-grip" aria-hidden="true"><span></span><span></span><span></span></span>
+        <div class="ed-title"></div>
+        <div class="ed-acts">
+          <button class="ed-btn ghost" data-act="dlgdiscard">Discard</button>
+          <button class="ed-btn primary" data-act="dlgsave">${D.busy === 'save' ? 'Saving…' : isNew ? 'Add' : 'Save'}</button>
+        </div>
+        <button class="ed-x" data-act="dlgclose" aria-label="Close" title="Close (Esc)">${icon('x', 'ic')}</button>
       </div>
-      <div class="dlg-f">
-        ${D.id ? `<button class="btn btn-danger" data-act="dlgdelete">${icon('trash', 'ic-sm')}Delete</button>` : ''}
-        <span class="spacer"></span>
-        <button class="btn btn-outline" data-act="dlgtest"${D.busy ? ' disabled' : ''}>Test connection</button>
-        <button class="btn btn-outline" data-act="dlgclose">Cancel</button>
-        <button class="btn btn-primary" data-act="dlgsave"${D.busy ? ' disabled' : ''}>${D.busy === 'save' ? 'Saving…' : D.id ? 'Save changes' : 'Add connection'}</button>
-      </div></div></div>`;
+      <div class="ed-body"><div class="ed-grid">
+        ${fld('Type', 'kind', `<select class="inp" id="dlgKind"${D.id ? ' disabled title="The type of a saved connection cannot be changed"' : ''}>${[['mqtt', 'MQTT broker'], ['opcua', 'OPC UA server']].map(([k, l]) => `<option value="${k}"${D.kind === k ? ' selected' : ''}>${l}</option>`).join('')}</select>`, { help: D.id ? 'The type of a saved connection cannot be changed. Delete it and add a new one instead.' : 'An MQTT broker, or an OPC UA server.' })}
+        ${fld('Name', 'name', inp('name', D.name, `placeholder="${D.kind === 'mqtt' ? 'plant-broker' : 'line-1-plc'}"`), { help: 'Shown in Connections, on the connection\'s tab, and as the top branch of its tree.' })}
+        ${toggle('Connected', 'enabled', 'enabled', D.enabled, 'Turn off to pause the connection without deleting it.', 'data-rerender="1"')}
+        ${D.kind === 'mqtt' ? mqttForm() : opcuaForm()}
+        ${full(testHtml)}
+        ${full(errCount ? `<div class="notice bad">${icon('alert', 'ic-sm')}<span>Fix the ${errCount === 1 ? 'highlighted field' : `${errCount} highlighted fields`} before saving.</span></div>` : '')}
+      </div></div>
+      <div class="ed-f">
+        <span class="ed-pend"><span class="ed-dot"></span><span>0 pending</span></span>
+        <span class="ed-f-acts">
+          <button class="ed-btn outline" data-act="dlgtest"${D.busy ? ' disabled' : ''}>${icon('plug', 'ic-sm')}${D.busy === 'test' ? 'Testing…' : 'Test'}</button>
+          ${D.id ? `<button class="ed-btn outline danger" data-act="dlgdelete">${icon('trash', 'ic-sm')}Delete</button>` : ''}
+        </span>
+      </div></div>`;
+    const panel = root.querySelector('.ed');
+    placePanel(panel);
+    root.querySelector('.ed-h').addEventListener('pointerdown', (e) => startDrag(e, panel));
     const kindSel = root.querySelector('#dlgKind');
     if (kindSel && !D.id) kindSel.addEventListener('change', () => setDialogKind(kindSel.value));
     root.querySelectorAll('[data-f]').forEach((el) => {
@@ -1053,13 +1111,18 @@
     }));
     const pin = root.querySelector('[data-act-pin]');
     if (pin) pin.addEventListener('change', () => { D.settings.serverCertThumbprint = pin.checked ? pin.dataset.actPin : ''; renderDialog(); });
-    root.querySelector('.dlg-body').scrollTop = scroll;
+    root.querySelector('.ed-body').scrollTop = scroll;
+    updateChrome();
   }
   async function dialogAction(act, el) {
     if (!D) return;
     if (act === 'dlgclose') { closeDialog(); return; }
-    if (act === 'dlgkind') { setDialogKind(el.dataset.kind); return; }
-    if (act === 'dlgauth') { D.settings.auth = el.dataset.v; renderDialog(); return; }
+    if (act === 'dlgtip') { D.tip = D.tip === el.dataset.k ? null : el.dataset.k; renderDialog(); return; }
+    if (act === 'dlgdiscard') {
+      const o = JSON.parse(D.orig);
+      D.kind = o.kind; D.name = o.name; D.enabled = o.enabled; D.settings = o.settings; D.secrets = {}; D.errors = {}; D.test = null;
+      renderDialog(); return;
+    }
     if (act === 'dlgpickep') {
       const x = D.disc.endpoints[Number(el.dataset.i)];
       D.settings.securityPolicy = x.policy; D.settings.securityMode = x.policy === 'None' ? 'None' : x.mode;
@@ -1090,14 +1153,14 @@
         const r = await res.json();
         if (!res.ok) { D.errors = r.errors || { name: 'The gateway refused the change.' }; D.busy = ''; renderDialog(); return; }
         S.openConn.add(`${r.kind === 'mqtt' ? 'mqtt' : 'ua'}:${r.id}`);
-        closeDialog();
+        closeDialog(true);
       } catch { D.busy = ''; D.test = { ok: false, message: 'The Witness gateway is not reachable.' }; renderDialog(); }
       return;
     }
     if (act === 'dlgdelete') {
       if (!window.confirm(`Delete the connection "${D.name}"?\n\nWitness disconnects from it and forgets its settings and stored credentials. This cannot be undone.`)) return;
       try { await fetch(`${apiBase}/api/connections/${encodeURIComponent(D.id)}`, { method: 'DELETE' }); } catch { /* the list refresh shows the result */ }
-      closeDialog();
+      closeDialog(true);
     }
   }
 
@@ -1382,18 +1445,6 @@ Then follow the instructions at the top of the brief: run the model-domain skill
     const item = (v) => `<button class="nav-item${S.view === v ? ' on' : ''}" data-act="nav" data-view="${v}" title="${VIEWS[v].title}">${icon(VIEWS[v].icon)}<span>${VIEWS[v].label}</span></button>`;
     $('#sideNav').innerHTML = `${item('conn')}<div class="nav-sec">Build</div>${item('atlas')}`;
   }
-  function renderFoot() {
-    const el = $('#sideFoot'); if (!el) return;
-    const summary = (label, states, detail) => {
-      const up = states.filter((x) => x === 'connected').length;
-      const dot = !states.length ? 'bad' : up === states.length ? 'ok' : up ? 'warn' : (states.some((x) => ['connecting', 'browsing', 'starting'].includes(x)) ? 'warn' : 'bad');
-      return `<div class="nav-item conn-item" data-act="nav" data-view="conn" title="Open Connections"><span class="dot ${dot}" style="margin:0 4px"></span><span class="conn-text"><b>${label} · ${up} of ${states.length}</b><span>${esc(detail)}</span></span></div>`;
-    };
-    const servers = [...SERVERS.values()];
-    el.innerHTML = summary('MQTT', BROKERS.map((b) => b.conn), BROKERS.length === 1 ? BROKERS[0].url.replace(/^wss?:\/\//, '') : `${BROKERS.length} brokers`)
-      + summary('OPC UA', servers.map(uaState), servers.length === 1 ? (servers[0].status.endpoint || '').replace(/^opc\.tcp:\/\//, '') : S.uaSocket === 'open' ? `${servers.length} servers` : 'gateway unreachable');
-    if (S.view === 'conn') renderConnections();
-  }
   function renderTabs() {
     $('#tabs').innerHTML = S.tabs.filter(vinfo).map((v) => { const i = vinfo(v); return `<div class="tab${S.view === v ? ' on' : ''}" data-act="nav" data-view="${esc(v)}" title="${esc(i.title)}">${icon(i.icon, 'ic-sm')}<span class="tab-label">${esc(i.label)}</span><button class="icon-sm" data-act="close" data-view="${esc(v)}" title="Close tab">${icon('x', 'ic-sm')}</button></div>`; }).join('');
   }
@@ -1598,7 +1649,8 @@ Then follow the instructions at the top of the brief: run the model-domain skill
     } else if (h.view !== S.view) go(h.view, false);
   });
   document.addEventListener('keydown', (e) => {
-    if (D) { if (e.key === 'Escape') closeDialog(); return; }
+    if (D && e.key === 'Escape') { closeDialog(); return; }
+    if (D && e.target.closest && e.target.closest('#modal')) return;
     const typing = e.target.matches('input, textarea');
     if (e.key === 'Escape' && !typing && isConnView(S.view) && lensOf(S.view).wide) { lensOf(S.view).wide = false; buildPage(); frame(true); return; }
     if (e.key === '/' && !typing) { const f = $('#filter') || $('#connFilter'); if (f) { e.preventDefault(); f.focus(); } }
@@ -1643,7 +1695,6 @@ Then follow the instructions at the top of the brief: run the model-domain skill
     if (h.legacy) S.pendingLegacy = h.legacy;
     if (isConnView(h.view)) lensOf(h.view).local = h.path;
     if (h.view !== 'conn') S.tabs.push(h.view);
-    renderFoot();
     go(h.view, false);
     connectUa();
   }

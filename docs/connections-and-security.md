@@ -1,6 +1,6 @@
 # Connections and security
 
-Connections are created and edited in **Connections > Add connection**, or with the pencil on a row. **Test connection** tries the settings without saving them. Saving reconnects only that connection. Unchecking **Connected** pauses a connection without deleting it, and **Delete** is in the edit dialog.
+Connections are created with **Connections > Add connection** and edited with the pencil on a row. Both open the same edit panel as the other Timebase 2.0 apps, such as Edit dataset in Historian. It floats over the right of the page, and you can drag it by its header. Each setting is one row: label, value, and an info button that explains it. The footer counts **pending** changes. **Discard** undoes them and **Save** applies them; both stay disabled until something changes. **Test** tries the settings without saving them. **Delete** is in the footer. Saving reconnects only that connection. Turning **Connected** off pauses a connection without deleting it. Closing the panel with unsaved changes asks first.
 
 ## MQTT
 
