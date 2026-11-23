@@ -3,7 +3,7 @@
 Browsers never talk to a broker or server directly. The gateway connects (with TLS, certificates and
 credentials as configured), subscribes, and streams everything to the page over one WebSocket.
 Connections are managed through the REST API below and stored by connections.py, which encrypts
-passwords and private keys at rest. The gateway also runs Move to Timebase (atlas_mapper.py) and serves
+passwords and private keys at rest. The gateway also runs Handoffs (atlas_mapper.py) and serves
 the saved Gage handoff briefs.
 
 REST
@@ -294,7 +294,7 @@ def save_brief(run):
         f"domain: {run.domain}",
         f"version: {version}",
         f"source: {st['name']} ({st['endpoint']})",
-        f"connector: {st.get('connector') or 'none yet'}",
+        f"bindings: Connect Historian connector for dataset {run.collector['historian']['dataset'] if run.collector else 'none'}",
         f"generated: {created}",
         f"model: {atlas_mapper.MODEL}",
         f"url: {entry['url']}",
@@ -320,6 +320,21 @@ def save_brief(run):
             write_atomic(fn, settings_text)
         entry["collector"] = {"file": md_name, "url": f"{INTERNAL_URL}/briefs/{md_name}", "json": json_name, "jsonUrl": json_url,
                               "name": inst["name"], "dataset": inst["historian"]["dataset"], "variablesLogged": inst["variablesLogged"]}
+    if run.connect:
+        plan = run.connect
+        base = f"{run.domain}-connect"
+        md_name, json_name = f"{base}-v{version}.md", f"{base}-v{version}.json"
+        json_url = f"{INTERNAL_URL}/briefs/{json_name}"
+        n_header = "\n".join(["---", "lookout_connect_handoff: 1", f"connector: {plan['name']}", f"dataset: {plan['dataset']}",
+                               f"version: {version}", f"source: {st['name']} ({st['endpoint']})", f"generated: {created}",
+                               f"url: {INTERNAL_URL}/briefs/{md_name}", "---", ""])
+        n_text = n_header + atlas_mapper.connect_brief(run.server, plan, json_url).rstrip() + "\n"
+        for fn in (md_name, f"{base}.md"):
+            write_atomic(fn, n_text)
+        for fn in (json_name, f"{base}.json"):
+            write_atomic(fn, json.dumps({"Settings": plan["Settings"]}, indent=2) + "\n")
+        entry["connect"] = {"file": md_name, "url": f"{INTERNAL_URL}/briefs/{md_name}", "json": json_name, "jsonUrl": json_url,
+                            "name": plan["name"], "dataset": plan["dataset"], "tagCount": plan["tagCount"]}
     index.append(entry)
     tmp = os.path.join(BRIEF_DIR, "index.json.tmp")
     with open(tmp, "w") as f:
@@ -409,7 +424,8 @@ async def agent_latest(request):
             return None
     text = read(entry["file"])
     collector = read((entry.get("collector") or {}).get("file"))
-    return web.json_response({"brief": text, "collector": collector, "artifact": entry, "domain": entry["domain"], "versions": entries})
+    connect = read((entry.get("connect") or {}).get("file"))
+    return web.json_response({"brief": text, "collector": collector, "connect": connect, "artifact": entry, "domain": entry["domain"], "versions": entries})
 
 
 async def agent_profile(request):

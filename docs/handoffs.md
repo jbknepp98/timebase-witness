@@ -1,12 +1,22 @@
 # Handoffs
 
-The **Handoffs** page (`#/atlas`, under *Build* in the left menu) turns a live OPC UA server into two handoffs for Gage. One sets up logging in Collector; the other models the plant in Atlas.
+The **Handoffs** page (`#/atlas`, under *Build* in the left menu) turns a live OPC UA server into three handoffs for Gage, one for each step of the data path:
+
+```
+OPC UA server ──▶ Collector ──▶ Historian dataset ──▶ Connect (Historian connector) ──▶ Atlas
+```
+
+1. **Collector** historizes the server into a Historian dataset.
+2. **Connect** serves that dataset to Atlas through a Timebase.Historian connector.
+3. **Atlas** models the plant, binding every property through the Connect connector.
+
+Run them in that order: each step needs the one before it.
 
 ## Running it
 
 1. Pick the server in the **Namespace** dropdown.
 2. Start the run. Progress streams in as the agent works. A run takes about 90 seconds and uses roughly 20k input and 11k output tokens.
-3. When it finishes, select the **Collector** or **Atlas** card to show that handoff below. The selected card has a Timebase Blue border. Each card has its own **Copy Gage prompt** button and download buttons. The **Handoffs** dropdown on the right picks a saved version.
+3. When it finishes, select the **Collector**, **Connect** or **Atlas** card to show that handoff below. The selected card has a Timebase Blue border. Each card has its own **Copy Gage prompt** button, with its download buttons on the row below. The **Version** dropdown on the right picks a saved version.
 
 Let the gateway watch the server for a few minutes before running. The agent relies on the observed state lists and value ranges, and these reset when the gateway restarts.
 
@@ -25,7 +35,7 @@ Witness checks the agent's Collector plan against the live namespace. It counts 
 
 To see what the tools return without calling the model, use `GET /api/agent/profile?server=<id>[&path=<object>]`.
 
-## The two handoffs
+## The three handoffs
 
 Each run saves numbered versions in `briefs/`, plus a "latest" copy of each.
 
@@ -41,14 +51,32 @@ The files are `<domain>-collector-vN.md` and `<domain>-collector-vN.json`. The h
 
 The Collector container has no curl or Python, so **Copy Gage prompt** puts the whole handoff into the prompt.
 
+### Connect handoff
+
+The files are `<domain>-connect-vN.md` and `<domain>-connect-vN.json`. Witness writes this one itself from the checked Collector plan; the agent is not involved. It describes:
+
+- a **Timebase.Historian** connector that reads the Collector's dataset: Historian host, port and TLS, sign-in as the Connect host, and one dataset entry. No secrets are needed;
+- **what the dataset looks like**: tag names (the dot-joined browse path, e.g. `DemoPlant.Processing.MixTank101.LevelPct`), the fields Collector writes on every tag (from the topic definition, e.g. Plant, Area, Equipment) with their values, data types, units, and sample tags for each group of objects that log the same signals;
+- the per-tag binding path through the connector, `<connector id>/<dataset>/<tag name>`.
+
+If a Historian connector already exists, Gage adds the dataset to it instead of creating another. The handoff asks Gage to report the connector id, which the Atlas handoff needs.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `CONNECT_HISTORIAN_HOST` | `historian` | Historian host as Connect reaches it |
+| `CONNECT_HISTORIAN_PORT` | `4512` | Historian port |
+| `CONNECT_HISTORIAN_TLS` | `true` | Whether Connect uses TLS to reach Historian |
+
 ### Atlas handoff
 
 The file is `<domain>-vN.md`. It contains:
 
 - a preface that tells Gage to run model-domain in Build mode and skip the interview;
 - a **Domain Summary** in Gage's own format;
-- source bindings for Gage's mapper, in the form `{CONNECTOR}/<dot-joined browse path>`;
-- the prerequisites outside Atlas, such as the Connect connector.
+- source bindings for Gage's mapper, in the form `{CONNECTOR}/<dataset>/<tag name>`. Witness fills in the dataset; `{CONNECTOR}` is the id of the Historian connector from the Connect handoff;
+- the prerequisites outside Atlas: the Collector instance and the Connect connector.
+
+Only variables the Collector logs exist in Historian, so the agent does not bind properties to variables it excluded.
 
 Gage in Atlas fetches the handoff by URL, from `http://lookout-gateway:8090/briefs/<file>` over the Timebase Docker network.
 

@@ -2,7 +2,7 @@
 
 **See what your industrial data sources are publishing, then move them into Timebase.**
 
-Witness is a browser app for exploring live MQTT brokers and OPC UA servers. It looks and works like the other Timebase 2.0 apps. Each connection opens in its own tab with a namespace browser, current values, quality, trends and a live message feed. **Handoffs** then reads a server's address space and writes two handoffs for Gage: one sets up the Collector instance that logs it, the other builds the Atlas domain that models it.
+Witness is a browser app for exploring live MQTT brokers and OPC UA servers. It looks and works like the other Timebase 2.0 apps. Each connection opens in its own tab with a namespace browser, current values, quality, trends and a live message feed. **Handoffs** then reads a server's address space and writes three handoffs for Gage, one per step of the data path: Collector historizes the server into a Historian dataset, Connect serves that dataset to Atlas, and Atlas models it.
 
 ## Features
 
@@ -19,7 +19,8 @@ Witness is a browser app for exploring live MQTT brokers and OPC UA servers. It 
 - **Secrets encrypted at rest.** Passwords and private keys are stored with Fernet encryption, using a key kept apart from the store. The browser only learns whether a secret is set, never its value. If no key is configured, Witness warns before anything is saved as plain text.
 - **Handoffs.** A Claude agent with read-only tools profiles an OPC UA namespace and produces:
   - a **Collector handoff**: an OPCUA collector instance, checked against the live namespace, as Markdown plus a downloadable settings JSON;
-  - an **Atlas handoff**: a Domain Summary and source bindings that Gage in Atlas builds in Build mode.
+  - a **Connect handoff**: a Timebase.Historian connector for that dataset, with a description of the dataset (tag naming, fields, data types, sample tags);
+  - an **Atlas handoff**: a Domain Summary and source bindings through the Connect connector, which Gage in Atlas builds in Build mode.
 
   Passwords are never exported.
 
@@ -31,7 +32,7 @@ Witness is a browser app for exploring live MQTT brokers and OPC UA servers. It 
                         proxies /api,     connections, live stream,  Anthropic API (Handoffs)
                         /briefs           agent, handoff files
                                                 │
-                     Gage in Collector / Atlas ◀┘ fetch handoffs over the Timebase network
+           Gage in Collector / Connect / Atlas ◀┘ fetch handoffs over the Timebase network
 ```
 
 The page never talks to a broker or server. The gateway owns every connection and streams to the page over one WebSocket.
@@ -62,7 +63,7 @@ Open `http://<host>:8088`, choose **Add connection**, and test it before saving.
 | --- | --- |
 | [Using Witness](docs/using-witness.md) | Connections list, connection tabs, namespace browser, live messages, links and keyboard |
 | [Connections and security](docs/connections-and-security.md) | MQTT and OPC UA settings, TLS and certificates, how secrets are stored |
-| [Handoffs](docs/handoffs.md) | What the agent does, the two handoffs, running them in Gage, cost |
+| [Handoffs](docs/handoffs.md) | What the agent does, the three handoffs, running them in Gage, cost |
 | [Deployment](docs/deployment.md) | Compose, Caddy, volumes, environment variables, upgrades, backups |
 | [Gateway API](docs/api.md) | REST endpoints and WebSocket messages |
 | [Development](docs/development.md) | Code layout, local preview, building the gateway image, design tokens |

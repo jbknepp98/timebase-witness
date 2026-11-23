@@ -1,17 +1,21 @@
-"""Move to Timebase: profile an OPC UA namespace and have Claude plan both handoffs.
+"""Handoffs: profile an OPC UA namespace and have Claude plan the move into Timebase.
 
 The gateway already holds each server's browsed address space and live values. This module
   1. profiles it deterministically (tree, repeated equipment patterns, types, units, observed values),
   2. runs a Claude tool loop over read-only tools so the model can drill into the namespace, and
   3. streams the run (status, reasoning summary, tool calls, the plan) to the browser as events.
 
-Two deliverables come out of one run:
-  - the Atlas handoff: a brief for Gage in Atlas (Domain Summary in Gage's interview format, source
-    bindings for the mapper step, prerequisites outside Atlas);
-  - the Collector handoff: a logging instance for Timebase Collector. The model proposes the dataset,
-    topics, topic definition, fields and exclusion filter with propose_collector_instance; Witness
-    validates them against the namespace and fills in the connection settings itself (never the password).
-Nothing is written to Atlas, Collector or Historian from here.
+The data path is source -> Collector -> Historian dataset -> Connect -> Atlas, and one run yields
+a handoff for each step:
+  - Collector: a logging instance that historizes the server. The model proposes the dataset, topics,
+    topic definition, fields and exclusion filter with propose_collector_instance; Witness validates them
+    against the namespace and fills in the connection settings itself (never the password).
+  - Connect: a Timebase.Historian connector that serves that dataset to Atlas, plus a description of
+    the dataset (tag naming, hierarchy fields, data types, units, sample tags). Witness writes it from
+    the validated Collector plan; the model is not involved.
+  - Atlas: a brief for Gage in Atlas (Domain Summary in Gage's interview format, source bindings through
+    the Connect connector for the mapper step, prerequisites outside Atlas).
+Nothing is written to Atlas, Connect, Collector or Historian from here.
 """
 import asyncio
 import json
@@ -89,7 +93,8 @@ Besides the Atlas brief you plan a Timebase Collector OPC UA instance that logs 
 - notes: short bullets a reviewer should check (what you excluded and why, anything uncertain).
 
 ## Binding paths
-Atlas reads this server through a Timebase Connect OPC UA connector. Its binding path for a variable is `{CONNECTOR}/{BrowsePath}` where BrowsePath is the dot-joined browse names from under Objects, e.g. `{CONNECTOR}/DemoPlant.Processing.MixTank101.LevelPct`. The tools give you each variable's binding path; write `{CONNECTOR}` literally - the connector id is filled in after the connector is created. For a series of instances, write one binding template per property using the instance-map column placeholder, e.g. `{CONNECTOR}/DemoPlant.Processing.[Unit].LevelPct`.
+Atlas never reads the server directly. The data path is: the Collector instance you propose historizes the server into a Timebase Historian dataset, a Timebase Connect Historian connector serves that dataset, and Atlas binds through that connector. A binding path is `{CONNECTOR}/{DATASET}/{TagName}` where TagName is the Historian tag name, which is the dot-joined browse path from under Objects, e.g. `{CONNECTOR}/{DATASET}/DemoPlant.Processing.MixTank101.LevelPct`. The tools give you each variable's binding path; write `{CONNECTOR}` and `{DATASET}` literally - Witness fills in the dataset from your Collector plan, and the connector id exists only after Gage creates the connector. For a series of instances, write one binding template per property using the instance-map column placeholder, e.g. `{CONNECTOR}/{DATASET}/DemoPlant.Processing.[Unit].LevelPct`.
+Only variables your Collector plan logs exist in Historian. Never bind a property to a variable your excludeRegex removes: leave such a property out of the model, or keep it unbound and say so in Mapping Notes.
 
 ## Output
 Reply with the brief only, as Markdown, with exactly these top-level sections in this order (no preamble):
@@ -105,7 +110,7 @@ Written for Gage's mapper, which authors every definition as a map (one-item map
 - Then the single root instance (a plain definition with no map).
 
 # Prerequisites Outside Atlas
-What must exist before mapper's bindings resolve (the Connect OPC UA connector: server URL, user, browse depth, publishing interval; anything else you found).
+What must exist before mapper's bindings resolve: the Collector instance logging into the dataset, and the Connect Historian connector serving it (Witness writes handoffs for both, so just name them in order); anything else you found.
 
 # Mapping Notes
 Up to 8 bullets on decisions a reviewer should check (type choices, skipped nodes, enum candidates, anything that looked inconsistent).
@@ -187,8 +192,13 @@ def clean_description(info):
     return d if d and d not in (info.get("name"), info.get("displayName")) else None
 
 
+def tag_name(info):
+    """Historian tag name Collector gives a variable: the dot-joined browse path."""
+    return info["path"].replace("/", ".")
+
+
 def binding_path(info):
-    return "{CONNECTOR}/" + info["path"].replace("/", ".")
+    return "{CONNECTOR}/{DATASET}/" + tag_name(info)
 
 
 class NamespaceView:
@@ -250,9 +260,8 @@ class NamespaceView:
             "server": {"name": st["name"], "endpoint": st["endpoint"], "product": st["serverInfo"], "user": st["user"],
                        "security": security_text(st)},
             "browseRoots": st.get("browseRoots") or "everything under Objects",
-            "bindingPathTemplate": "{CONNECTOR}/{dot-joined browse path under Objects}",
-            "connectConnector": (f"{st['connector']} already serves this server; Witness fills it in for {{CONNECTOR}}, so keep writing {{CONNECTOR}} and say in Prerequisites that the connector exists."
-                                 if st.get("connector") else "No Connect connector is configured for this server yet: list creating one under Prerequisites."),
+            "bindingPathTemplate": "{CONNECTOR}/{DATASET}/{dot-joined browse path under Objects}",
+            "dataPath": "Collector historizes the server into the dataset you propose; a Connect Historian connector serves it to Atlas. Keep {CONNECTOR} and {DATASET} literal.",
             "totals": {"objects": len(objects), "variables": len(variables), "writableVariables": sum(1 for v in variables if v.get("writable"))},
             "objectTree": tree,
             "repeatedPatterns": [
@@ -323,6 +332,7 @@ def validate_collector(server, plan):
     if not plan.get("subscriptions"):
         problems.append("at least one subscription is needed")
     logged = set()
+    owner = {}
     for i, sub in enumerate(plan.get("subscriptions") or []):
         topics = [t.strip() for t in sub.get("topics") or [] if t.strip()]
         rep = {"subscription": i + 1, "topics": {}}
@@ -348,6 +358,8 @@ def validate_collector(server, plan):
                 problems.append(f"subscription {i + 1} excludeRegex does not compile: {e}")
         kept = [v for v in matched if v not in excluded]
         logged.update(kept)
+        for v in kept:
+            owner.setdefault(v, i)
         td = sub.get("topicDefinition") or ""
         keys = [k for k in td.split(".") if k]
         if not keys:
@@ -366,6 +378,7 @@ def validate_collector(server, plan):
         subs.append(rep)
     report = {"ok": not problems, "problems": problems, "variablesInNamespace": len(variables),
               "variablesLogged": len(logged), "notLogged": [v for v in variables if v not in logged][:25], "subscriptions": subs}
+    report["_owner"] = owner      # tag -> subscription index; run_tool strips it before the model sees the report
     return report, problems
 
 
@@ -446,11 +459,127 @@ def collector_brief(server, inst, settings_url):
 """
 
 
+# ---------------------------------------------------------------------- Connect handoff
+HISTORIAN_HOST = os.environ.get("CONNECT_HISTORIAN_HOST", "historian")
+HISTORIAN_PORT = int(os.environ.get("CONNECT_HISTORIAN_PORT", "4512"))
+HISTORIAN_TLS = os.environ.get("CONNECT_HISTORIAN_TLS", "true").lower() not in ("0", "false", "no")
+
+
+def tag_fields(tag, sub):
+    """The metadata fields Collector writes on a tag, from the subscription's topic definition and fields."""
+    keys = [k for k in (sub.get("TopicDefinition") or "").split(".") if k]
+    segs = tag.split(".")
+    seg = {k: segs[i] for i, k in enumerate(keys) if i < len(segs)}
+    return {name: re.sub(r"\[Topic:([^\]]+)\]", lambda m: seg.get(m.group(1), m.group(0)), str(val))
+            for name, val in (sub.get("Fields") or {}).items()}
+
+
+def connect_plan(server, inst, owner):
+    """The Connect handoff: a Historian connector for the Collector's dataset, and what that dataset holds."""
+    dataset = inst["historian"]["dataset"]
+    subs = inst["Settings"]["Subscriptions"]
+    by_tag = {n["path"].replace("/", "."): n for n in server.nodes.values() if n["nodeClass"] == "Variable"}
+    tags = []
+    for tag in sorted(owner):
+        n = by_tag.get(tag) or {}
+        tags.append({"name": tag, "dataType": n.get("dataType") or "?", "units": units_of(n) if n else None,
+                     "fields": tag_fields(tag, subs[owner[tag]]), "parent": tag.rsplit(".", 1)[0], "signal": tag.rsplit(".", 1)[-1]})
+    types, units = defaultdict(int), defaultdict(int)
+    for t in tags:
+        types[t["dataType"]] += 1
+        if t["units"]:
+            units[t["units"]] += 1
+    # hierarchy fields: the [Topic:key] fields, with how many distinct values each takes
+    field_values = defaultdict(set)
+    for t in tags:
+        for k, v in t["fields"].items():
+            field_values[k].add(v)
+    fields = [{"name": k, "distinct": len(v), "examples": sorted(v)[:6]} for k, v in field_values.items()]
+    # one sample object per signal pattern (objects that log the same set of signals)
+    groups = defaultdict(list)
+    for t in tags:
+        groups[t["parent"]].append(t)
+    patterns = defaultdict(list)
+    for parent, ts in groups.items():
+        patterns[tuple(sorted(x["signal"] for x in ts))].append(parent)
+    samples = []
+    for sig, parents in sorted(patterns.items(), key=lambda kv: -len(kv[1]))[:8]:
+        first = sorted(parents)[0]
+        samples.append({"objects": len(parents), "example": first, "tags": sorted(groups[first], key=lambda x: x["name"])[:12]})
+    settings = {"Host": HISTORIAN_HOST, "Port": HISTORIAN_PORT, "UseTls": HISTORIAN_TLS,
+                "ClientName": f"Timebase.Connect.{dataset}", "Auth": {"Mode": "Host"},
+                "Datasets": {dataset: {"Dataset": dataset}}, "DefaultLookback": "01:00:00"}
+    return {"name": f"Historian {dataset}", "type": "Timebase.Historian", "dataset": dataset, "collector": inst["name"],
+            "Settings": settings, "tagCount": len(tags), "dataTypes": dict(types), "units": dict(units),
+            "fields": fields, "samples": samples, "maxDepth": max((t["name"].count(".") + 1 for t in tags), default=0)}
+
+
+def connect_brief(server, plan, settings_url):
+    st = server.status()
+    ds = plan["dataset"]
+    settings_json = json.dumps({"Settings": plan["Settings"]}, indent=2)
+    types = ", ".join(f"{k} {v}" for k, v in sorted(plan["dataTypes"].items(), key=lambda kv: -kv[1])) or "none"
+    units = ", ".join(f"`{k}` ({v})" for k, v in sorted(plan["units"].items(), key=lambda kv: -kv[1])[:15]) or "none reported by the server"
+    fields = "\n".join(f"| `{f['name']}` | {f['distinct']} | {', '.join(f'`{e}`' for e in f['examples'])}{' ...' if f['distinct'] > len(f['examples']) else ''} |" for f in plan["fields"]) or "| (none) | | |"
+    sample_rows = []
+    for smp in plan["samples"]:
+        sample_rows.append(f"\n**{smp['example']}** - {smp['objects']} object{'s log' if smp['objects'] != 1 else ' logs'} this set of signals\n\n| Tag name | Server data type | Units | Binding path |\n|---|---|---|---|")
+        for t in smp["tags"]:
+            sample_rows.append(f"| `{t['name']}` | {t['dataType']} | {t['units'] or ''} | `{{CONNECTOR}}/{ds}/{t['name']}` |")
+    samples = "\n".join(sample_rows)
+    return f"""> **For Gage in Connect:** use the **configure-historian-connector** skill to serve the Historian dataset `{ds}` to Atlas through a **Timebase.Historian** connector. Everything below was worked out by Witness from the Collector plan for `{st['name']}`; do not ask the user for settings that are given here.
+
+# Connect Historian Connector: {ds}
+
+| Setting | Value |
+|---|---|
+| Plugin type | Timebase.Historian |
+| Suggested name | `{plan['name']}` |
+| Historian | `{plan['Settings']['Host']}:{plan['Settings']['Port']}` ({'TLS' if plan['Settings']['UseTls'] else 'no TLS'}), signing in as this Connect host |
+| Dataset entry | key `{ds}` -> dataset `{ds}` |
+| Filled by | Collector instance `{plan['collector']}` (Collector handoff) |
+| Expected tags | {plan['tagCount']} |
+| Settings file | {settings_url} |
+
+## Steps
+1. The dataset is written by the Collector instance `{plan['collector']}`. If it is not logging yet, set it up from the Collector handoff first: until it runs, the catalog below is empty.
+2. `ListConnectors`. If a **Timebase.Historian** connector already reads this Historian, add the `{ds}` entry under its `Datasets` instead of creating a second connector, and use that connector's id below.
+3. Otherwise `AddConnector` with type **Timebase.Historian**, rename it to `{plan['name']}`, and `UpdateConnectorSettings` with the settings below.
+4. Make sure the connector is enabled for the Atlas that will hold the domain, then `StartConnector`.
+5. Wait 10 seconds, then `TestConnector`, `GetLogs` and `GetConnector`. Read the catalog path `<connector id>/{ds}`: expect about {plan['tagCount']} tags named as below.
+6. Report the connector id. The Atlas handoff's bindings start with `{{CONNECTOR}}/{ds}/`, and Gage in Atlas needs that id for `{{CONNECTOR}}`.
+
+## Settings
+```json
+{settings_json}
+```
+
+## What the dataset looks like
+
+**Tag names** are the server's browse path from under Objects, joined with dots, up to {plan['maxDepth']} segments, e.g. `{plan['samples'][0]['tags'][0]['name'] if plan['samples'] else 'Plant.Area.Equipment.Signal'}`.
+
+**Per-tag binding path** through this connector: `<connector id>/{ds}/<tag name>`. Only per-tag paths can be subscribed; `<connector id>/{ds}` is the catalog (one row per tag).
+
+**Fields** Collector writes on every tag:
+
+| Field | Distinct values | Examples |
+|---|---|---|
+{fields}
+
+**Data types** (as the server reports them): {types}.
+
+**Units**: {units}.
+
+## Sample tags
+{samples}
+"""
+
+
 def preface(server, domain):
     st = server.status()
-    conn = st.get("connector")
-    bind = (f"For **mapper**, use the Source Bindings section. Every binding path starts with `{conn}`, the Connect OPC UA connector that already serves this server."
-            if conn else "For **mapper**, use the Source Bindings section: replace `{CONNECTOR}` with the id of the Connect OPC UA connector for this server (see Prerequisites).")
+    bind = ("For **mapper**, use the Source Bindings section. Atlas reads the historized data through Connect: replace `{CONNECTOR}` with the id of "
+            "the Timebase.Historian connector set up from the Connect handoff (ask the user for it if you do not have it). "
+            "The Collector and Connect handoffs must be done first, or the bindings will not resolve.")
     return f"""> **For Gage:** use the **model-domain** skill in **Build** mode for a new domain named `{domain}`.
 > The Domain Summary below was drafted by Witness from the live OPC UA server `{st['name']}` ({st['endpoint']}) and reviewed by the user - treat it as the confirmed interview output and **skip Step 1**.
 > Hand the Domain Summary to **architect**, then **builder**. {bind} Then run **reviewer** post-change.
@@ -458,11 +587,10 @@ def preface(server, domain):
 """
 
 
-def finish(server, domain, text):
-    """Preface plus the model's brief, with the real connector id filled in when one is configured."""
-    conn = server.status().get("connector")
-    if conn:
-        text = text.replace("{CONNECTOR}", conn)
+def finish(server, domain, text, dataset=None):
+    """Preface plus the model's brief, with the Historian dataset filled in from the Collector plan."""
+    if dataset:
+        text = text.replace("{DATASET}", dataset)
     return preface(server, domain) + text
 
 
@@ -482,7 +610,7 @@ def summarize_result(name, result):
 
 
 class MapRun:
-    """One Move to Timebase run. Events are queued for every subscriber (SSE)."""
+    """One Handoffs run. Events are queued for every subscriber (SSE)."""
 
     def __init__(self, server, domain, on_brief=None):
         self.on_brief = on_brief   # called with the run once the brief is complete; returns artifact metadata
@@ -494,6 +622,7 @@ class MapRun:
         self.done = False
         self.brief = None
         self.collector = None      # Collector instance plan once propose_collector_instance passes
+        self.connect = None        # Connect Historian connector plan, derived from the Collector plan
         self.nudged = False
         self.started = time.time()
 
@@ -516,8 +645,10 @@ class MapRun:
             if not isinstance(args, dict):
                 raise ValueError("propose_collector_instance needs an object")
             report, problems = validate_collector(self.server, args)
+            owner = report.pop("_owner")
             if not problems:
                 self.collector = collector_instance(self.server, args, report)
+                self.connect = connect_plan(self.server, self.collector, owner)
             return report
         raise ValueError(f"unknown tool {name}")
 
@@ -604,7 +735,7 @@ class MapRun:
                 text = "".join(b.text for b in response.content if b.type == "text").strip()
                 if response.stop_reason == "max_tokens":
                     await self.emit({"type": "status", "text": "The brief hit the output limit and may be cut off."})
-                self.brief = finish(self.server, self.domain, text)
+                self.brief = finish(self.server, self.domain, text, self.collector and self.collector["historian"]["dataset"])
                 artifact = None
                 if self.on_brief:
                     try:

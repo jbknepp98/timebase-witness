@@ -1141,7 +1141,7 @@
       ${sec('Browse')}
         ${fld('Branches to include', 'browseRoots', `<textarea class="inp mono" rows="2" data-f="s.browseRoots" data-list="1" spellcheck="false" placeholder="blank = everything under Objects">${esc((v.browseRoots || []).join('\n'))}</textarea>`, { wide: true, opt: true, help: 'One browse path per line, for example <code>DemoPlant/Processing</code>.' })}
         ${fld('Publishing (ms)', 'publishMs', inp('s.publishMs', v.publishMs, 'data-num="1" inputmode="numeric"'), { help: 'How often the server sends batches of value changes.' })}
-        ${fld('Connect connector', 'connector', inp('s.connector', v.connector, 'placeholder="con_…"'), { opt: true, help: 'The Timebase Connect connector for this server. Handoffs uses it for Atlas binding paths.' })}`;
+        ${fld('Connect connector', 'connector', inp('s.connector', v.connector, 'placeholder="con_…"'), { opt: true, help: 'For reference: a Timebase Connect connector that reads this server live, if there is one. Handoffs do not use it: Atlas binds through the Historian connector from the Connect handoff.' })}`;
   }
   function setDialogKind(kind) {
     if (!DLG_DEFAULTS[kind] || kind === D.kind) return;
@@ -1398,7 +1398,7 @@
       const r = await (await fetch(`${apiBase}/api/agent/latest?${q}`, { cache: 'no-store' })).json();
       A.versions = r.versions || [];
       if (r.brief && !A.running && (file || !A.brief)) {
-        A.brief = r.brief; A.collector = r.collector || ''; A.artifact = r.artifact; A.domain = r.domain || A.domain;
+        A.brief = r.brief; A.collector = r.collector || ''; A.connect = r.connect || ''; A.artifact = r.artifact; A.domain = r.domain || A.domain;
         if (!file) A.items = [{ kind: 'status', text: `Showing saved handoffs v${r.artifact.version} for ${r.artifact.domain}, drafted ${ago(Date.parse(r.artifact.createdAt))}.` }];
         A.dirty = true; buildPage();
       } else { A.dirty = true; }
@@ -1411,6 +1411,10 @@ Fetch it with Bash (the Atlas container has no curl):
 python3 -c "import urllib.request; print(urllib.request.urlopen('${a.url}').read().decode())"
 
 Then follow the instructions at the top of the brief: run the model-domain skill in Build mode for the domain \`${a.domain}\`, treat the Domain Summary as the confirmed interview output, and use its Source Bindings for the mapper step. Show me the architect plan before anything is built.`;
+  }
+  function connectPrompt() {
+    const body = S.agent.connect.replace(/^---\n[\s\S]*?\n---\n/, '').trim();
+    return `Set up the Timebase Connect Historian connector described in this Witness handoff, so Atlas can read the historized data. Show me the settings before you start the connector, and tell me the connector id when it is running.\n\n${body}`;
   }
   function collectorPrompt() {
     const body = S.agent.collector.replace(/^---\n[\s\S]*?\n---\n/, '').trim();
@@ -1435,7 +1439,7 @@ Then follow the instructions at the top of the brief: run the model-domain skill
   }
   function selectAgentServer(id) {
     if (S.agent.running) return;
-    S.agent.server = id; S.agent.domain = ''; S.agent.brief = ''; S.agent.collector = ''; S.agent.artifact = null; S.agent.items = []; S.agent.error = null; S.agent.dirty = true;
+    S.agent.server = id; S.agent.domain = ''; S.agent.brief = ''; S.agent.collector = ''; S.agent.connect = ''; S.agent.artifact = null; S.agent.items = []; S.agent.error = null; S.agent.dirty = true;
     buildPage(); loadLatestBrief();
   }
 
@@ -1443,7 +1447,7 @@ Then follow the instructions at the top of the brief: run the model-domain skill
     const A = S.agent;
     if (A.running || !A.server) return;
     const dom = ($('#agentDomain') && $('#agentDomain').value.trim()) || A.domain;
-    A.items = []; A.brief = ''; A.collector = ''; A.handoff = 'atlas'; A.draft = ''; A.error = null; A.usage = null; A.artifact = null; A.running = true; A.dirty = true;
+    A.items = []; A.brief = ''; A.collector = ''; A.connect = ''; A.handoff = 'atlas'; A.draft = ''; A.error = null; A.usage = null; A.artifact = null; A.running = true; A.dirty = true;
     renderAtlas();
     try {
       const res = await fetch(`${apiBase}/api/agent/runs`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ server: A.server, domain: dom }) });
@@ -1506,18 +1510,23 @@ Then follow the instructions at the top of the brief: run the model-domain skill
     if (ho) {
       const ready = art && !A.running;
       const col = ready ? art.collector : null;
-      const sig = JSON.stringify([ready && art.file, col && col.file, A.handoff]);
+      const con = ready ? art.connect : null;
+      const sig = JSON.stringify([ready && art.file, col && col.file, con && con.file, A.handoff]);
       if (ho.dataset.sig !== sig) {
         ho.dataset.sig = sig;
         const card = (key, ic, title, sub, meta, acts) => `<div class="handoff${A.handoff === key ? ' on' : ''}" data-act="agentho" data-h="${key}" role="button" tabindex="0" aria-pressed="${A.handoff === key}" title="Show the ${title} handoff">
             <div class="ho-top"><span class="ho-ic">${icon(ic, 'ic-sm')}</span><div class="ho-t"><b>${title}</b><span>${sub}</span></div></div>
             <div class="ho-meta">${meta}</div>
             ${acts ? `<div class="ho-acts">${acts}</div>` : ''}</div>`;
+        const acts = (act, dls) => `<button class="btn btn-outline btn-sm" data-act="${act}">${icon('copy', 'ic-sm')}Copy Gage prompt</button><div class="ho-dl">${dls}</div>`;
+        const missing = 'Not in this version. Select Plan again to add it.';
         ho.innerHTML = ready ? `
-          ${card('collector', 'database', 'Collector', 'Logs the server to Historian', col ? `Instance <code>${esc(col.name)}</code> → dataset <code>${esc(col.dataset)}</code> · ${fmtNum(col.variablesLogged)} tags` : 'Not in this version. Select Plan again to add it.',
-            col ? `<button class="btn btn-outline btn-sm" data-act="agentcolprompt">${icon('copy', 'ic-sm')}Copy Gage prompt</button><span class="spacer"></span>${dlBtn(col.file, '.md', 'Download the Collector handoff')}${dlBtn(col.json, '.json', 'Download the Collector settings')}` : '')}
-          ${card('atlas', 'sparkles', 'Atlas', 'Gage builds the domain', `Domain <code>${esc(art.domain)}</code>${art.connector ? ` · bindings use <code>${esc(art.connector)}</code>` : ''} · Gage fetches <code>${esc(art.url)}</code>`,
-            `<button class="btn btn-outline btn-sm" data-act="agentprompt">${icon('copy', 'ic-sm')}Copy Gage prompt</button><span class="spacer"></span>${dlBtn(art.file, '.md', 'Download the Atlas handoff')}`)}` : '';
+          ${card('collector', 'database', 'Collector', 'Logs the server to Historian', col ? `Instance <code>${esc(col.name)}</code> → dataset <code>${esc(col.dataset)}</code> · ${fmtNum(col.variablesLogged)} tags` : missing,
+            col ? acts('agentcolprompt', dlBtn(col.file, '.md', 'Download the Collector handoff') + dlBtn(col.json, '.json', 'Download the Collector settings')) : '')}
+          ${card('connect', 'plug', 'Connect', 'Serves the dataset to Atlas', con ? `Historian connector · dataset <code>${esc(con.dataset)}</code> · ${fmtNum(con.tagCount)} tags` : missing,
+            con ? acts('agentconprompt', dlBtn(con.file, '.md', 'Download the Connect handoff') + dlBtn(con.json, '.json', 'Download the Connect settings')) : '')}
+          ${card('atlas', 'sparkles', 'Atlas', 'Gage builds the domain', `Domain <code>${esc(art.domain)}</code>${con ? ` · bindings through the Connect handoff` : ''} · Gage fetches <code>${esc(art.url)}</code>`,
+            acts('agentprompt', dlBtn(art.file, '.md', 'Download the Atlas handoff')))}` : '';
       }
     }
     const nearBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 60;
@@ -1535,15 +1544,15 @@ Then follow the instructions at the top of the brief: run the model-domain skill
       return '';
     }).join('') : `<div class="tree-empty">${SERVERS.size ? 'Pick a server, name the domain, then select Plan the move. The agent reads the namespace through the Witness gateway and never writes to it, to Collector or to Atlas.' : 'No OPC UA servers are connected to the gateway.'}</div>`;
     if (nearBottom || A.running) log.scrollTop = log.scrollHeight;
-    const showCol = A.handoff === 'collector' && !A.running;
-    const src = showCol ? A.collector : (A.brief || A.draft);
+    const showCol = A.handoff !== 'atlas' && !A.running;
+    const src = !showCol ? (A.brief || A.draft) : A.handoff === 'connect' ? A.connect : A.collector;
     const text = (src || '').replace(/^---\n[\s\S]*?\n---\n/, ''); // front matter is summarised in the handoff cards
-    const sig = `${showCol}|${text.length}|${art && art.file}`;
+    const sig = `${A.handoff}|${A.running}|${text.length}|${art && art.file}`;
     if (brief.dataset.sig !== sig) {
       brief.dataset.sig = sig;
       brief.innerHTML = text ? mdToHtml(text) : showCol
-        ? `<div class="empty-state">${icon('database')}<h2>No Collector handoff</h2><p>This version was planned before Witness produced Collector handoffs. Select Plan again to create one.</p></div>`
-        : `<div class="empty-state">${icon('sparkles')}<h2>No plan yet</h2><p>The handoffs appear here as the agent writes them. Review them, then pass each one to Gage in Collector and in Atlas.</p></div>`;
+        ? `<div class="empty-state">${icon(A.handoff === 'connect' ? 'plug' : 'database')}<h2>No ${A.handoff === 'connect' ? 'Connect' : 'Collector'} handoff</h2><p>This version was planned before Witness produced ${A.handoff === 'connect' ? 'Connect' : 'Collector'} handoffs. Select Plan again to create one.</p></div>`
+        : `<div class="empty-state">${icon('sparkles')}<h2>No plan yet</h2><p>The handoffs appear here as the agent writes them. Review them, then pass each one to Gage in Collector, Connect and Atlas, in that order.</p></div>`;
     }
     if (A.draft && !A.brief) brief.scrollTop = brief.scrollHeight;
   }
@@ -1760,6 +1769,8 @@ Then follow the instructions at the top of the brief: run the model-domain skill
       startMapping();
     } else if (act === 'agentprompt') {
       if (S.agent.artifact) copyText(gagePrompt(S.agent.artifact)).then(() => { el.innerHTML = `${icon('check', 'ic-sm')}Copied`; setTimeout(() => { el.innerHTML = `${icon('copy', 'ic-sm')}Copy Gage prompt`; }, 1500); });
+    } else if (act === 'agentconprompt') {
+      if (S.agent.connect) copyText(connectPrompt()).then(() => { el.innerHTML = `${icon('check', 'ic-sm')}Copied`; setTimeout(() => { el.innerHTML = `${icon('copy', 'ic-sm')}Copy Gage prompt`; }, 1500); });
     } else if (act === 'agentcolprompt') {
       if (S.agent.collector) copyText(collectorPrompt()).then(() => { el.innerHTML = `${icon('check', 'ic-sm')}Copied`; setTimeout(() => { el.innerHTML = `${icon('copy', 'ic-sm')}Copy Gage prompt`; }, 1500); });
     } else if (act === 'agentcopy') {

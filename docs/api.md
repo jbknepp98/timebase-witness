@@ -39,7 +39,7 @@ Connect a WebSocket to `/api/stream/ws` (`/api/opcua/ws` is an alias). The gatew
 | GET | `/api/agent/profile?server=<id>[&path=<object>]` | What the agent's tools see, without calling the model |
 | POST | `/api/agent/runs` | Starts a run for `{server, domain?}` and returns the run id. Answers 409 while a run for that server is already in progress |
 | GET | `/api/agent/runs/{run}/events` | Server-sent events: progress, tool calls, and the result |
-| GET | `/api/agent/latest?server=<id>[&file=<name>]` | The latest (or named) Atlas and Collector handoffs for a server, with the version list |
+| GET | `/api/agent/latest?server=<id>[&file=<name>]` | The latest (or named) Collector, Connect and Atlas handoffs for a server, with the version list |
 | GET | `/briefs/` | Saved handoff files |
 | GET | `/briefs/{name}` | One handoff (`.md` or `.json`). Add `?download=1` to download it |
 
