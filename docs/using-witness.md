@@ -31,6 +31,24 @@ The left panel is the namespace browser. It is labelled **Namespace** for MQTT a
 
 The button in the top-right corner of the browser panel expands the tree to the full width of the tab and hides the detail panel. Select it again, or press `Esc`, to restore the split. Each tab remembers its own selection, filter and expanded state when you switch tabs.
 
+### Copying from payloads
+
+Every copy shows a short "Copied …" note at the bottom of the page.
+
+- **Copy menu on the Payload (or Data value) section.** What it offers:
+  - The payload as received.
+  - For JSON payloads: formatted JSON, compact JSON, and **Paths and values** (one `JSONPath<tab>value` line per field, ready to paste into a spreadsheet or a Collector field mapping).
+  - For OPC UA: **Value only**.
+  - The topic or NodeId.
+  - The message as JSON, with its topic or NodeId and the time it arrived.
+  - For MQTT: a `mosquitto_pub` command that replays the message. The host is the broker address Witness uses. If the broker needs a password, the command has a `<password>` placeholder; Witness never copies passwords.
+  - The history kept for that topic or node, as JSON lines or CSV.
+- **JSON keys and values.** Click a value to copy it. Click a key to choose what to copy: its value (objects and arrays come as formatted JSON), its JSONPath (`$.variables.PowerKw`), its dotted path, the key name, or `path = value`.
+- **History rows** and **Live messages rows.** The copy button at the end of the row copies that one message: its payload, its topic or NodeId (Live messages only), or the message as JSON.
+- **Live values cards** and **record cards.** The copy button in the card's corner copies the value, or the record as JSON.
+- **Node, Attributes and Records tables.** Click a value to copy it.
+- **Current value** of a plain-text topic has its own copy button.
+
 ## Links
 
 | Link | Opens |

@@ -549,3 +549,25 @@ select.inp { padding-right: 28px; }
 .ed-dot { width: 6px; height: 6px; border-radius: 999px; background: color-mix(in srgb, var(--muted-fg) 50%, transparent); }
 .ed-pend.on { color: var(--fg); }
 .ed-pend.on .ed-dot { background: var(--primary); }
+
+/* copy affordances in the namespace explorer */
+.sec-h .btn-sm { align-self: center; gap: 4px; }
+.sec-h .btn-sm .ic-sm:last-child { margin-right: -4px; opacity: .7; }
+pre.json .j-key, pre.json [data-act="jval"] { cursor: pointer; border-radius: 3px; }
+pre.json .j-key:hover, pre.json [data-act="jval"]:hover { background: color-mix(in srgb, var(--primary) 16%, transparent); outline: 1px solid color-mix(in srgb, var(--primary) 40%, transparent); }
+.kv dd.cp { cursor: copy; border-radius: 3px; }
+.kv dd.cp:hover { background: color-mix(in srgb, var(--primary) 12%, transparent); }
+.card-cp { margin-left: auto; opacity: 0; }
+.card:hover .card-cp, .card-cp:focus-visible { opacity: 1; }
+.row-cp { opacity: 0; }
+.li:hover .row-cp, .row-cp:focus-visible { opacity: 1; }
+.hist-li { grid-template-columns: 120px 18px 1fr 22px; }
+.msg-li { grid-template-columns: 120px minmax(220px, 34%) 1fr 22px; }
+.cmenu { position: fixed; z-index: 60; min-width: 220px; max-width: 360px; padding: 4px; background: var(--popover); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 10px 24px -6px #00000040, 0 2px 6px #0000001f; }
+.cmenu button { display: flex; align-items: baseline; gap: 12px; width: 100%; border: 0; background: transparent; color: var(--fg); text-align: left; padding: 6px 10px; border-radius: 6px; cursor: pointer; font: 400 13px/18px Inter, Poppins, sans-serif; }
+.cmenu button:hover { background: var(--hover); }
+.cmenu button small { margin-left: auto; color: var(--muted-fg); font: 11px "JetBrains Mono", monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
+.cmenu-sep { height: 1px; background: var(--border); margin: 4px 2px; }
+#toast { position: fixed; left: 50%; bottom: 24px; transform: translate(-50%, 12px); z-index: 70; display: flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: 8px; background: var(--fg); color: var(--bg); font: 500 13px Poppins, sans-serif; opacity: 0; pointer-events: none; transition: opacity .15s, transform .15s; }
+#toast.on { opacity: 1; transform: translate(-50%, 0); }
+#toast .ic-sm { color: var(--success); }

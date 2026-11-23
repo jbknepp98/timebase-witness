@@ -21,6 +21,7 @@
     play: '<polygon points="6 3 20 12 6 21 6 3"/>',
     copy: '<rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
     check: '<path d="M20 6 9 17l-5-5"/>',
+    chevronDown: '<path d="m6 9 6 6 6-6"/>',
     x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
     folder: '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
     box: '<path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/>',
@@ -120,8 +121,24 @@
     for (const k of Object.keys(b)) out[k] = isObj(a[k]) && isObj(b[k]) && !isTVQ(b[k]) ? merge(a[k], b[k]) : b[k];
     return out;
   }
+  // JSON path of a key below p: a.b, a[0], a["odd key"]; jsonPath() adds the $ for JSONPath
+  const pk = (p, k) => (/^[A-Za-z_][\w]*$/.test(k) ? (p ? `${p}.${k}` : k) : `${p}[${JSON.stringify(k)}]`);
+  const jsonPath = (p) => (!p ? '$' : p[0] === '[' ? `$${p}` : `$.${p}`);
+  function getAt(v, path) {
+    if (!path) return v;
+    let hit; let found = false;
+    const walk = (x, p) => {
+      if (found) return;
+      if (p === path) { hit = x; found = true; return; }
+      if (p && !path.startsWith(p)) return;
+      if (Array.isArray(x)) x.forEach((y, i) => walk(y, `${p}[${i}]`));
+      else if (x && typeof x === 'object') for (const k of Object.keys(x)) walk(x[k], pk(p, k));
+    };
+    walk(v, '');
+    return found ? hit : undefined;
+  }
   function leaves(v, p, out) {
-    if (isObj(v)) { for (const k of Object.keys(v)) leaves(v[k], p ? `${p}.${k}` : k, out); }
+    if (isObj(v)) { for (const k of Object.keys(v)) leaves(v[k], pk(p, k), out); }
     else if (Array.isArray(v)) v.forEach((x, i) => leaves(x, `${p}[${i}]`, out));
     else out.set(p, v);
     return out;
@@ -135,7 +152,7 @@
   }
   function jsonHtml(v, p, ch, ind) {
     const pad = '  '.repeat(ind);
-    if (v === null) return `<span class="j-null${ch.has(p) ? ' chg' : ''}">null</span>`;
+    if (v === null) return `<span class="j-null${ch.has(p) ? ' chg' : ''}" data-act="jval" data-jp="${esc(p)}" title="Copy value">null</span>`;
     if (Array.isArray(v)) {
       if (!v.length) return '[]';
       return `[\n${v.map((x, i) => `${pad}  ${jsonHtml(x, `${p}[${i}]`, ch, ind + 1)}`).join(',\n')}\n${pad}]`;
@@ -143,11 +160,11 @@
     if (typeof v === 'object') {
       const ks = Object.keys(v);
       if (!ks.length) return '{}';
-      return `{\n${ks.map((k) => `${pad}  <span class="j-key">"${esc(k)}"</span>: ${jsonHtml(v[k], p ? `${p}.${k}` : k, ch, ind + 1)}`).join(',\n')}\n${pad}}`;
+      return `{\n${ks.map((k) => { const q = pk(p, k); return `${pad}  <span class="j-key" data-act="jkey" data-jp="${esc(q)}" title="${esc(jsonPath(q))} - click for copy options">"${esc(k)}"</span>: ${jsonHtml(v[k], q, ch, ind + 1)}`; }).join(',\n')}\n${pad}}`;
     }
     const cls = typeof v === 'string' ? 'j-str' : typeof v === 'number' ? 'j-num' : 'j-bool';
     const s = typeof v === 'string' ? `"${esc(v)}"` : esc(String(v));
-    return `<span class="${cls}${ch.has(p) ? ' chg' : ''}">${s}</span>`;
+    return `<span class="${cls}${ch.has(p) ? ' chg' : ''}" data-act="jval" data-jp="${esc(p)}" title="Copy value">${s}</span>`;
   }
   function oneLine(text, max = 180) {
     const t = String(text).replace(/\s+/g, ' ');
@@ -163,6 +180,103 @@
     document.body.appendChild(ta); ta.select();
     try { document.execCommand('copy'); } catch { /* ignore */ }
     ta.remove();
+  }
+  let toastTimer = 0;
+  function toast(msg) {
+    let el = document.getElementById('toast');
+    if (!el) { el = document.createElement('div'); el.id = 'toast'; el.setAttribute('role', 'status'); document.body.appendChild(el); }
+    el.innerHTML = `${icon('check', 'ic-sm')}<span>${esc(msg)}</span>`;
+    el.classList.add('on');
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('on'), 1600);
+  }
+  function copied(text, what) { return copyText(text).then(() => toast(`Copied ${what}`)); }
+  const valText = (v) => (typeof v === 'string' ? v : JSON.stringify(v, null, 2));
+  const csvCell = (v) => (/[",\n\r]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+  const shq = (v) => `'${String(v).replace(/'/g, `'\\''`)}'`;
+
+  // Copy menu: one floating list on <body>, so live re-renders of the detail pane do not close it.
+  // Items are { label, hint?, text: () => string, what }; separators are null.
+  let MENU = null;
+  function openMenu(anchor, items) {
+    closeMenu();
+    const el = document.createElement('div');
+    el.id = 'cmenu'; el.className = 'cmenu'; el.setAttribute('role', 'menu');
+    el.innerHTML = items.map((it, i) => (it ? `<button role="menuitem" data-act="mitem" data-i="${i}"><span>${esc(it.label)}</span>${it.hint ? `<small>${esc(it.hint)}</small>` : ''}</button>` : '<div class="cmenu-sep"></div>')).join('');
+    document.body.appendChild(el);
+    const r = anchor.getBoundingClientRect();
+    const w = el.offsetWidth; const h = el.offsetHeight;
+    const left = Math.max(8, Math.min(anchor.tagName === 'BUTTON' ? r.right - w : r.left, window.innerWidth - w - 8));
+    const top = r.bottom + 4 + h > window.innerHeight - 8 ? Math.max(8, r.top - h - 4) : r.bottom + 4;
+    el.style.left = `${left}px`; el.style.top = `${top}px`;
+    MENU = { el, items, anchor };
+  }
+  function closeMenu() { if (MENU) { MENU.el.remove(); MENU = null; } }
+  // the payload being shown in the detail pane: the selected topic's own message, or its retained state
+  function shownPayload() {
+    const c = cur(); const n = find(c, c.selected);
+    if (!n) return null;
+    if (n.raw !== null) return n;
+    const st = n.hasState ? n.children.get('state') : null;
+    return st && st.raw !== null ? st : null;
+  }
+  function msgJson(src, h) {
+    const ua = !!src.ua;
+    const o = ua ? { nodeId: src.ua.id, browsePath: localPath(src) } : { topic: localPath(src) };
+    let payload = h.raw;
+    try { payload = JSON.parse(h.raw); } catch { /* text */ }
+    o[ua ? 'dataValue' : 'payload'] = payload;
+    if (!ua) { o.retained = !!h.retained; if (h === src.history[0]) o.qos = src.qos; }
+    o.receivedAt = new Date(h.t).toISOString();
+    return JSON.stringify(o, null, 2);
+  }
+  function pubCommand(src) {
+    const b = BROKERS.find((x) => x.name === topOf(src).name);
+    let host = 'localhost'; let port = '1883'; let tls = false;
+    try { const u = new URL(b.url); host = u.hostname; port = u.port || (u.protocol === 'mqtts:' ? '8883' : '1883'); tls = u.protocol === 'mqtts:'; } catch { /* keep defaults */ }
+    const auth = b && b.username ? ` -u ${shq(b.username)} -P '<password>'` : '';
+    return `mosquitto_pub -h ${host} -p ${port}${tls ? ' --cafile <ca.pem>' : ''}${auth} -t ${shq(localPath(src))} -q ${src.qos || 0}${src.retained ? ' -r' : ''} -m ${shq(src.raw)}`;
+  }
+  function historyLines(src) { return src.history.map((h) => msgJson(src, h).replace(/\n\s*/g, ' ')).join('\n'); }
+  function historyCsv(src) {
+    const ua = !!src.ua;
+    const head = ua ? 'received_at,payload' : 'received_at,retained,payload';
+    return [head, ...src.history.map((h) => [new Date(h.t).toISOString(), ...(ua ? [] : [h.retained ? 'true' : 'false']), csvCell(h.raw)].join(','))].join('\n');
+  }
+  function flatPaths(json) {
+    return [...leaves(json, '', new Map())].map(([k, v]) => `${jsonPath(k)}\t${typeof v === 'string' ? v : JSON.stringify(v)}`).join('\n');
+  }
+  function payloadMenu(src) {
+    const ua = !!src.ua; const isJson = src.json !== undefined;
+    const items = [
+      { label: ua ? 'Data value' : 'Payload', hint: 'as received', text: () => src.raw, what: ua ? 'data value' : 'payload' },
+    ];
+    if (isJson) {
+      items.push({ label: 'Formatted JSON', hint: 'indented', text: () => JSON.stringify(src.json, null, 2), what: 'formatted JSON' });
+      items.push({ label: 'Compact JSON', hint: 'one line', text: () => JSON.stringify(src.json), what: 'compact JSON' });
+      items.push({ label: 'Paths and values', hint: 'JSONPath, tab, value', text: () => flatPaths(src.json), what: 'paths and values' });
+    }
+    if (ua && isJson && src.json && typeof src.json === 'object' && 'value' in src.json) items.push({ label: 'Value only', text: () => valText(src.json.value), what: 'value' });
+    items.push(null);
+    items.push(ua ? { label: 'NodeId', text: () => src.ua.id, what: 'NodeId' } : { label: 'Topic', text: () => localPath(src), what: 'topic' });
+    items.push({ label: ua ? 'Node and value as JSON' : 'Topic and message as JSON', hint: 'with time', text: () => msgJson(src, src.history[0] || { t: src.last, raw: src.raw, retained: src.retained }), what: 'message' });
+    if (!ua) items.push({ label: 'mosquitto_pub command', hint: 'replays this message', text: () => pubCommand(src), what: 'mosquitto_pub command' });
+    if (src.history.length) {
+      items.push(null);
+      items.push({ label: `History as JSON lines`, hint: `${src.history.length} ${ua ? "update" : "message"}${src.history.length === 1 ? "" : "s"}`, text: () => historyLines(src), what: 'history' });
+      items.push({ label: `History as CSV`, hint: `${src.history.length} ${ua ? "update" : "message"}${src.history.length === 1 ? "" : "s"}`, text: () => historyCsv(src), what: 'history as CSV' });
+    }
+    return items;
+  }
+  function keyMenu(src, path) {
+    const key = (path.match(/(?:\.|^)([A-Za-z_]\w*)$|\["((?:[^"\\]|\\.)*)"\]$|\[(\d+)\]$/) || []).slice(1).find((x) => x !== undefined) || path;
+    return [
+      { label: 'Value', text: () => valText(getAt(src.json, path)), what: 'value' },
+      { label: 'JSONPath', hint: jsonPath(path), text: () => jsonPath(path), what: 'JSONPath' },
+      { label: 'Dotted path', hint: path, text: () => path, what: 'path' },
+      { label: 'Key name', hint: key, text: () => key, what: 'key' },
+      null,
+      { label: 'Path and value', text: () => `${jsonPath(path)} = ${JSON.stringify(getAt(src.json, path))}`, what: 'path and value' },
+    ];
   }
 
   // ---------------------------------------------------------------- state
@@ -732,7 +846,7 @@
         html += tv.map((x) => {
           const trend = typeof x.val === 'number' || typeof x.val === 'boolean';
           return `<div class="card tvq${trend ? ' click' : ' str'}${x.key === n.selProp ? ' sel' : ''}" ${trend ? `data-act="prop" data-key="${esc(x.key)}"` : ''}>
-            <div class="card-top"><span class="card-title">${esc(humanize(x.key))}</span></div>
+            <div class="card-top"><span class="card-title">${esc(humanize(x.key))}</span><button class="icon-sm card-cp" data-act="cpval" data-key="${esc(x.key)}" title="Copy value">${icon('copy', 'ic-sm')}</button></div>
             <div class="big">${esc(fmtVal(x.val))}${x.uom ? ` <span class="card-sub">${esc(x.uom)}</span>` : ''}</div>
             <div class="meta">${x.q ? `<span class="qpill ${x.q.cls}">${x.q.label}</span>` : ''}${x.ts ? `<span title="Source timestamp">${esc(fmtTime(x.ts))}</span><span data-ago="${x.ts}">${ago(x.ts)}</span>` : ''}</div>
             ${sparkSvg(n.series.get(x.key))}
@@ -746,22 +860,22 @@
       }
       if (ua) {
         const rows = [['NodeId', ua.id], ['Server', topOf(n).name], ['Browse path', localPath(n)], ['Node class', ua.nodeClass], ['Data type', ua.dataType], ['Access', n.uaVar ? (ua.writable ? 'Read and write' : 'Read only') : null], ['Units', n.units], ['Description', uaDescription(ua)]].filter(([, v]) => v);
-        html += `<div class="sec"><div class="sec-h"><span class="lbl">Node</span></div><div class="card"><dl class="kv">${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl></div></div>`;
+        html += `<div class="sec"><div class="sec-h"><span class="lbl">Node</span></div><div class="card"><dl class="kv">${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd class="cp" data-act="cptext" data-text="${esc(v)}" data-what="${esc(k)}" title="Copy ${esc(k)}">${esc(v)}</dd>`).join('')}</dl></div></div>`;
       } else if (attrs.length) {
-        html += `<div class="sec"><div class="sec-h"><span class="lbl">Attributes</span></div><div class="card"><dl class="kv">${attrs.map((a) => `<dt>${esc(humanize(a.key))}</dt><dd class="${a.val === null ? 'null' : ''}">${esc(fmtVal(a.val))}</dd>`).join('')}</dl></div></div>`;
+        html += `<div class="sec"><div class="sec-h"><span class="lbl">Attributes</span></div><div class="card"><dl class="kv">${attrs.map((a) => `<dt>${esc(humanize(a.key))}</dt><dd class="cp${a.val === null ? ' null' : ''}" data-act="cptext" data-text="${esc(valText(a.val))}" data-what="${esc(humanize(a.key))}" title="Copy ${esc(humanize(a.key))}">${esc(fmtVal(a.val))}</dd>`).join('')}</dl></div></div>`;
       }
       if (recs.length) {
         html += `<div class="sec"><div class="sec-h"><span class="lbl">Records</span><span class="note">Latest related record from the model</span></div><div class="grid">`;
         html += recs.map((r) => {
           const entries = Array.isArray(r.val) ? r.val.map((v, i) => [String(i), v]) : Object.entries(r.val);
           const empty = entries.every(([, v]) => v === null);
-          return `<div class="card"><div class="card-top"><span class="card-title">${esc(humanize(r.key))}</span></div>
-            ${empty ? '<div class="card-sub">No record</div>' : `<dl class="kv" style="margin-top:8px">${entries.map(([k, v]) => `<dt>${esc(humanize(k))}</dt><dd class="${v === null ? 'null' : ''}">${esc(fmtVal(v))}</dd>`).join('')}</dl>`}</div>`;
+          return `<div class="card"><div class="card-top"><span class="card-title">${esc(humanize(r.key))}</span>${empty ? '' : `<button class="icon-sm card-cp" data-act="cptext" data-text="${esc(JSON.stringify(r.val, null, 2))}" data-what="${esc(humanize(r.key))} record" title="Copy record as JSON">${icon('copy', 'ic-sm')}</button>`}</div>
+            ${empty ? '<div class="card-sub">No record</div>' : `<dl class="kv" style="margin-top:8px">${entries.map(([k, v]) => `<dt>${esc(humanize(k))}</dt><dd class="cp${v === null ? ' null' : ''}" data-act="cptext" data-text="${esc(valText(v))}" data-what="${esc(humanize(k))}" title="Copy ${esc(humanize(k))}">${esc(fmtVal(v))}</dd>`).join('')}</dl>`}</div>`;
         }).join('');
         html += '</div></div>';
       }
     } else if (own) {
-      html += `<div class="sec"><div class="sec-h"><span class="lbl">Current value</span></div><div class="card"><div class="textval">${esc(n.raw === '' ? '(empty payload)' : n.raw)}</div></div></div>`;
+      html += `<div class="sec"><div class="sec-h"><span class="lbl">Current value</span><span class="spacer"></span><button class="icon-sm" data-act="cptext" data-text="${esc(n.raw)}" data-what="value" title="Copy value">${icon('copy', 'ic-sm')}</button></div><div class="card"><div class="textval">${esc(n.raw === '' ? '(empty payload)' : n.raw)}</div></div></div>`;
       if (n.series.has('')) html += `<div class="sec">${bigChart(n, '')}</div>`;
     }
 
@@ -770,10 +884,10 @@
       const ch = c.tab === 'latest' && src.json !== undefined ? changedPaths(src.prevJson, src.json) : new Set();
       const body = c.tab === 'latest'
         ? `<pre class="json">${src.json !== undefined ? jsonHtml(src.json, '', ch, 0) : esc(src.raw)}</pre>`
-        : `<div class="list">${src.history.map((h) => `<div class="li hist-li"><span class="t">${fmtTime(h.t, true)}</span><span class="r" title="${h.retained ? 'Retained' : ''}">${h.retained ? 'R' : ''}</span><span class="p" title="${esc(oneLine(h.raw, 2000))}">${esc(oneLine(h.raw) || '(empty)')}</span></div>`).join('')}</div>`;
+        : `<div class="list">${src.history.map((h) => `<div class="li hist-li"><span class="t">${fmtTime(h.t, true)}</span><span class="r" title="${h.retained ? 'Retained' : ''}">${h.retained ? 'R' : ''}</span><span class="p" title="${esc(oneLine(h.raw, 2000))}">${esc(oneLine(h.raw) || '(empty)')}</span><button class="icon-sm row-cp" data-act="cphist" data-t="${h.t}" title="Copy this message">${icon('copy', 'ic-sm')}</button></div>`).join('')}</div>`;
       const label = ua ? 'Data value' : 'Payload';
       const note = ua ? 'Latest DataValue from the subscription' : (src === n ? 'Latest message on this topic' : `Retained message on ${esc(localPath(src))}`);
-      html += `<div class="sec"><div class="sec-h"><span class="lbl">${label}</span><span class="note">${note}</span></div>
+      html += `<div class="sec"><div class="sec-h"><span class="lbl">${label}</span><span class="note">${note}${src.json !== undefined && c.tab === 'latest' ? ' · click a key or value to copy it' : ''}</span><span class="spacer"></span><button class="btn btn-outline btn-sm" data-act="pmenu" title="Copy options">${icon('copy', 'ic-sm')}Copy${icon('chevronDown', 'ic-sm')}</button></div>
         <div class="seg"><button class="${c.tab === 'latest' ? 'on' : ''}" data-act="tab" data-tab="latest">Latest</button><button class="${c.tab === 'history' ? 'on' : ''}" data-act="tab" data-tab="history">History (${src.history.length})</button></div>${body}</div>`;
     }
     if (others.length) html += `<div class="sec"><div class="sec-h"><span class="lbl">${ua ? 'Child objects' : 'Sub-topics'}</span></div><div class="grid">${others.map((k) => childCard(c, k)).join('')}</div></div>`;
@@ -1219,7 +1333,7 @@
     const items = (f ? all.filter((m) => m.topic.toLowerCase().includes(f)) : all).slice(0, 200);
     const cut = k.name.length + 1;
     el.innerHTML = items.length
-      ? items.map((m) => `<div class="li click msg-li${m.id > S.feedSeen ? ' new' : ''}" data-act="open" data-path="${esc(m.topic)}"><span class="t">${fmtTime(m.t, true)}</span><span class="tp" title="${esc(m.topic.slice(cut))}">${esc(m.topic.slice(cut))}</span><span class="p">${esc(oneLine(m.text, 260) || '(empty)')}</span></div>`).join('')
+      ? items.map((m) => `<div class="li click msg-li${m.id > S.feedSeen ? ' new' : ''}" data-act="open" data-path="${esc(m.topic)}"><span class="t">${fmtTime(m.t, true)}</span><span class="tp" title="${esc(m.topic.slice(cut))}">${esc(m.topic.slice(cut))}</span><span class="p">${esc(oneLine(m.text, 260) || '(empty)')}</span><button class="icon-sm row-cp" data-act="fmenu" data-id="${m.id}" title="Copy options">${icon('copy', 'ic-sm')}</button></div>`).join('')
       : `<div class="empty-state small">${icon('activity')}<h2>${f ? 'No recent messages match the filter' : 'No messages yet'}</h2><p>${k.kind === 'ua' ? 'Value changes' : 'Messages'} appear here as they arrive, newest first. Select one to open it.</p></div>`;
     const note = $('#liveNote'); if (note) note.textContent = `${fmtNum(items.length)} most recent${f ? ' matching the filter' : ''} · newest first`;
     S.feedSeen = S.feedId;
@@ -1554,10 +1668,53 @@ Then follow the instructions at the top of the brief: run the model-domain skill
 
   document.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return;
+    if (MENU && !e.target.closest('#cmenu')) {
+      const again = e.target.closest('[data-act]') === MENU.anchor || (MENU.anchor.dataset.act === 'pmenu' && e.target.closest('[data-act="pmenu"]'));
+      closeMenu();
+      if (again) return;
+    }
     const el = e.target.closest('[data-act]');
     if (!el) return;
     const act = el.dataset.act;
     const c = cur();
+    if (act === 'mitem') {
+      const it = MENU && MENU.items[+el.dataset.i];
+      closeMenu();
+      if (it) copied(it.text(), it.what);
+      return;
+    }
+    if (act === 'pmenu') { const src = shownPayload(); if (src) openMenu(el, payloadMenu(src)); return; }
+    if (act === 'jkey') { e.stopPropagation(); const src = shownPayload(); if (src && src.json !== undefined) openMenu(el, keyMenu(src, el.dataset.jp)); return; }
+    if (act === 'jval') { const src = shownPayload(); if (src && src.json !== undefined) copied(valText(getAt(src.json, el.dataset.jp)), 'value'); return; }
+    if (act === 'cptext') { e.stopPropagation(); copied(el.dataset.text, el.dataset.what || 'value'); return; }
+    if (act === 'cpval') {
+      e.stopPropagation();
+      const n = find(c, c.selected); const x = n && viewParts(n.view).tv.find((t) => t.key === el.dataset.key);
+      if (x) copied(valText(x.val), humanize(x.key));
+      return;
+    }
+    if (act === 'cphist') {
+      const src = shownPayload(); const h = src && src.history.find((y) => y.t === +el.dataset.t);
+      if (h) openMenu(el, [
+        { label: src.ua ? 'Data value' : 'Payload', text: () => h.raw, what: src.ua ? 'data value' : 'payload' },
+        { label: src.ua ? 'Node and value as JSON' : 'Topic and message as JSON', hint: 'with time', text: () => msgJson(src, h), what: 'message' },
+      ]);
+      return;
+    }
+    if (act === 'fmenu') {
+      e.stopPropagation();
+      const k = connOf(S.view); const m = k && feedItems(k.id).find((y) => y.id === +el.dataset.id);
+      if (m) {
+        const n = find(c, m.topic); const ua = c.key === 'ua';
+        const topic = n ? (ua && n.ua ? n.ua.id : localPath(n)) : m.topic;
+        openMenu(el, [
+          { label: ua ? 'Data value' : 'Payload', text: () => m.text, what: ua ? 'data value' : 'payload' },
+          { label: ua ? 'NodeId' : 'Topic', text: () => topic, what: ua ? 'NodeId' : 'topic' },
+          { label: ua ? 'Node and value as JSON' : 'Topic and message as JSON', hint: 'with time', text: () => (n ? msgJson(n, { t: m.t, raw: m.text, retained: false }) : m.text), what: 'message' },
+        ]);
+      }
+      return;
+    }
     if (act === 'tog') {
       e.stopPropagation();
       const p = el.dataset.path;
@@ -1649,6 +1806,7 @@ Then follow the instructions at the top of the brief: run the model-domain skill
     } else if (h.view !== S.view) go(h.view, false);
   });
   document.addEventListener('keydown', (e) => {
+    if (MENU && e.key === 'Escape') { closeMenu(); return; }
     if (D && e.key === 'Escape') { closeDialog(); return; }
     if (D && e.target.closest && e.target.closest('#modal')) return;
     const typing = e.target.matches('input, textarea');
@@ -1661,6 +1819,9 @@ Then follow the instructions at the top of the brief: run the model-domain skill
     }
     else if (e.key === ' ' && !typing) { e.preventDefault(); setPaused(!S.paused); }
   });
+
+  window.addEventListener('resize', closeMenu);
+  document.addEventListener('wheel', (e) => { if (MENU && !MENU.el.contains(e.target)) closeMenu(); }, { passive: true });
 
   function setPaused(p) {
     S.paused = p;
