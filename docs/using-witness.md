@@ -56,7 +56,7 @@ Every copy shows a short "Copied …" note at the bottom of the page.
 | `#/conn` | Connections |
 | `#/c/<connection id>` | A connection tab |
 | `#/c/<connection id>/<path>` | A connection tab with a topic or node selected |
-| `#/atlas` | Move to Timebase |
+| `#/atlas` | Handoffs |
 
 Older `#/ns/<broker>/…` and `#/ua/<server>/…` links still work. They open the matching connection tab.
 

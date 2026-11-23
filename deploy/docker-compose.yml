@@ -23,7 +23,7 @@ services:
     env_file:
       - path: gateway.env          # optional first-start seed (OPCUA_SERVERS / MQTT_BROKERS)
         required: false
-      - path: agent.env            # ANTHROPIC_API_KEY for Move to Timebase
+      - path: agent.env            # ANTHROPIC_API_KEY for Handoffs
         required: false
     volumes:
       - ./briefs:/data/briefs              # saved handoffs

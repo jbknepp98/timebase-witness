@@ -5,7 +5,7 @@ Witness runs as its own compose project, **witness**, with two containers. Both 
 | Service | Image | Role |
 | --- | --- | --- |
 | `web` (container `witness-web`) | `caddy:2-alpine` | Serves `site/` on port 8088. Proxies `/api/*` and `/briefs/*` to the gateway; agent streams are not buffered |
-| `gateway` (container `witness-gateway`, image `witness-gateway:current`) | built from `gateway/` | Connections, live stream, Move to Timebase and handoff files, on port 8090 inside the network |
+| `gateway` (container `witness-gateway`, image `witness-gateway:current`) | built from `gateway/` | Connections, live stream, Handoffs and handoff files, on port 8090 inside the network |
 
 The gateway also answers to the network alias `lookout-gateway`, on both networks. The URLs inside handoffs point at that name, so keep the alias.
 
@@ -35,7 +35,7 @@ The gateway runs as uid 1000, so these folders must be writable by it (`chown -R
 | `MQTT_CACHE_MAX` | `20000` | Most retained MQTT topics per broker |
 | `OPCUA_SERVERS`, `MQTT_BROKERS` | | Seed connections as JSON. Read only on first start, when there is no `connections.json` yet. See `deploy/gateway.env.example` |
 
-The Move to Timebase variables are listed in [Move to Timebase](move-to-timebase.md#settings).
+The Handoffs variables are listed in [Handoffs](handoffs.md#settings).
 
 ## Creating the encryption key
 

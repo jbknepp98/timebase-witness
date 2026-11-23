@@ -31,7 +31,7 @@ Connect a WebSocket to `/api/stream/ws` (`/api/opcua/ws` is an alias). The gatew
 | `{"type":"mqtt_snapshot","conn":…,"msgs":[…]}` | Retained and recent MQTT messages, sent on connect |
 | `{"type":"mqtt","conn":…,"msgs":[…]}` | New MQTT messages |
 
-## Move to Timebase
+## Handoffs
 
 | Method | Path | Notes |
 | --- | --- | --- |

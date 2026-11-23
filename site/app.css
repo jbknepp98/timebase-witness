@@ -438,7 +438,7 @@ select.inp { padding-right: 28px; }
 .pick .dot { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); pointer-events: none; }
 .pick select.inp { padding-left: 28px; height: 36px; }
 
-/* Move to Timebase: handoff cards (the cards pick which handoff shows below) */
+/* Handoffs: handoff cards (the cards pick which handoff shows below) */
 .ho-bar { display: flex; align-items: flex-start; gap: 16px; padding: 12px 16px; border-bottom: 1px solid var(--border); }
 .ho-ver { margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; flex: none; }
 .ho-ver .ver-select { margin-left: 0; }

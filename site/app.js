@@ -282,7 +282,7 @@
   // ---------------------------------------------------------------- state
   const VIEWS = {
     conn: { label: 'Connections', title: 'Connections', icon: 'plug' },
-    atlas: { label: 'Move to Timebase', title: 'Move to Timebase', icon: 'sparkles' },
+    atlas: { label: 'Handoffs', title: 'Handoffs', icon: 'sparkles' },
   };
   const HIST = 300; // 5 minutes of 1 s samples for the Connections tiles
   function mkNode(name, path, parent) {
@@ -1141,7 +1141,7 @@
       ${sec('Browse')}
         ${fld('Branches to include', 'browseRoots', `<textarea class="inp mono" rows="2" data-f="s.browseRoots" data-list="1" spellcheck="false" placeholder="blank = everything under Objects">${esc((v.browseRoots || []).join('\n'))}</textarea>`, { wide: true, opt: true, help: 'One browse path per line, for example <code>DemoPlant/Processing</code>.' })}
         ${fld('Publishing (ms)', 'publishMs', inp('s.publishMs', v.publishMs, 'data-num="1" inputmode="numeric"'), { help: 'How often the server sends batches of value changes.' })}
-        ${fld('Connect connector', 'connector', inp('s.connector', v.connector, 'placeholder="con_…"'), { opt: true, help: 'The Timebase Connect connector for this server. Move to Timebase uses it for Atlas binding paths.' })}`;
+        ${fld('Connect connector', 'connector', inp('s.connector', v.connector, 'placeholder="con_…"'), { opt: true, help: 'The Timebase Connect connector for this server. Handoffs uses it for Atlas binding paths.' })}`;
   }
   function setDialogKind(kind) {
     if (!DLG_DEFAULTS[kind] || kind === D.kind) return;
@@ -1339,7 +1339,7 @@
     S.feedSeen = S.feedId;
   }
 
-  // ---------------------------------------------------------------- Move to Timebase (agent run in the gateway)
+  // ---------------------------------------------------------------- Handoffs (agent run in the gateway)
   function mdInline(t) {
     return esc(t)
       .replace(/`([^`]+)`/g, '<code>$1</code>')
@@ -1478,7 +1478,7 @@ Then follow the instructions at the top of the brief: run the model-domain skill
         <div class="panel agent-log"><div class="agent-h"><span class="lbl">Agent activity</span><span class="note" id="agentState"></span></div><div id="agentLog"></div></div>
         <div class="panel agent-brief"><div class="ho-bar">
             <div class="handoffs" id="agentHandoffs"></div>
-            <div class="ho-ver"><span class="lbl">Handoffs</span><select id="agentVersion" class="ver-select" title="Saved versions"></select></div></div>
+            <div class="ho-ver"><span class="lbl">Version</span><select id="agentVersion" class="ver-select" title="Saved versions"></select></div></div>
           <div class="md" id="agentBrief"></div></div>
       </div>`;
     const d = $('#agentDomain'); d.addEventListener('input', () => { A.domain = d.value; });

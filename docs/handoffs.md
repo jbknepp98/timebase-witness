@@ -1,6 +1,6 @@
-# Move to Timebase
+# Handoffs
 
-**Move to Timebase** (`#/atlas`, under *Build* in the left menu) turns a live OPC UA server into two handoffs for Gage. One sets up logging in Collector; the other models the plant in Atlas.
+The **Handoffs** page (`#/atlas`, under *Build* in the left menu) turns a live OPC UA server into two handoffs for Gage. One sets up logging in Collector; the other models the plant in Atlas.
 
 ## Running it
 
@@ -56,7 +56,7 @@ Gage in Atlas fetches the handoff by URL, from `http://lookout-gateway:8090/brie
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `ANTHROPIC_API_KEY` | | Required for Move to Timebase |
+| `ANTHROPIC_API_KEY` | | Required for Handoffs |
 | `LOOKOUT_AGENT_MODEL` | `claude-opus-5-5` | Model for the agent |
 | `LOOKOUT_AGENT_EFFORT` | `high` | Reasoning effort |
 | `LOOKOUT_AGENT_MAX_TURNS` | `12` | Tool-loop limit |

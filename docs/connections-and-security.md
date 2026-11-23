@@ -26,7 +26,7 @@ Connections are created with **Connections > Add connection** and edited with th
 | Login | Anonymous, or user name and password |
 | Branches to include | Browse paths to limit the connection to, one per line, for example `DemoPlant/Processing`. Empty means the whole Objects folder |
 | Publishing interval | Milliseconds between value batches (default 500) |
-| Connect connector | The Timebase Connect connector id used for Atlas bindings in Move to Timebase |
+| Connect connector | The Timebase Connect connector id used for Atlas bindings in Handoffs |
 
 **Client certificate:** the gateway creates its own OPC UA application certificate the first time it starts. The certificate is valid for one year and its application URI is `urn:flow-software:lookout-gateway`. Download it from the connection dialog, or from `/api/opcua/client-cert.der`, and add it to a server's trusted clients when the server needs signed or encrypted channels.
 

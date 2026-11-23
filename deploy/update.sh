@@ -3,7 +3,7 @@
 #   deploy/update.sh            pull; rebuild + restart the gateway only if gateway/ changed
 #   deploy/update.sh --rebuild  pull; always rebuild + restart the gateway
 # The page is served straight from ../site, so a pull updates it in place. A gateway restart resets
-# what Move to Timebase has observed, so it is skipped when gateway/ did not change.
+# what Handoffs has observed, so it is skipped when gateway/ did not change.
 #
 # Host-specific settings (optional) go in deploy/update.local.env, which git ignores, e.g.
 #   DOCKER=/path/to/docker

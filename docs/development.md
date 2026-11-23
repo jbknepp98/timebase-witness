@@ -5,14 +5,14 @@
 ```
 site/                 the web page: plain HTML, CSS and JavaScript, no build step
   index.html          shell: sidebar, tab strip, page; applies the stored theme before first paint
-  app.js              views, routing, connection tabs, namespace tree, live feed, dialogs, Move to Timebase
+  app.js              views, routing, connection tabs, namespace tree, live feed, dialogs, Handoffs
   app.css             Timebase 2.0 shell styles (--tb-* tokens)
   config.json         {"title": "Witness"}
   brand/              Timebase icon
 gateway/              Python 3.12 (aiohttp, asyncua, aiomqtt, anthropic)
   gateway.py          HTTP and WebSocket server, agent runs, handoff files
   connections.py      connection store, secret encryption, MQTT and OPC UA sessions
-  atlas_mapper.py     Move to Timebase: agent tools, namespace profile, Collector validation, handoff writers
+  atlas_mapper.py     Handoffs: agent tools, namespace profile, Collector validation, handoff writers
   Dockerfile
 deploy/               the witness compose project: docker-compose.yml, Caddyfile, update.sh, example env files
 examples/             a sample Atlas handoff
@@ -26,7 +26,7 @@ cp dev-config.example.json dev-config.json   # point opcuaGateway at a running g
 python3 dev_server.py                        # http://127.0.0.1:8790
 ```
 
-`dev_server.py` serves `site/` and replaces `config.json` with `dev-config.json`. It forwards `/api/` requests to the gateway host in `opcuaGateway`, so connections and Move to Timebase work locally without CORS; keep `"apiBase": ""` in `dev-config.json` for that. The live stream connects to the gateway directly over WebSocket.
+`dev_server.py` serves `site/` and replaces `config.json` with `dev-config.json`. It forwards `/api/` requests to the gateway host in `opcuaGateway`, so connections and Handoffs work locally without CORS; keep `"apiBase": ""` in `dev-config.json` for that. The live stream connects to the gateway directly over WebSocket.
 
 ## Gateway
 

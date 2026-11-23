@@ -1,7 +1,7 @@
 """Local preview: serves site/ on 127.0.0.1:$PORT (default 8790), swapping in dev-config.json.
 
 HTTP calls to /api/ are forwarded to the gateway named by opcuaGateway in dev-config.json, so the page's
-REST calls (connections, Move to Timebase, briefs) work without CORS. The live stream still connects to
+REST calls (connections, Handoffs, briefs) work without CORS. The live stream still connects to
 the gateway directly over WebSocket.
 """
 import functools, http.server, json, os, urllib.error, urllib.parse, urllib.request
