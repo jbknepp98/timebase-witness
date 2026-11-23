@@ -1476,16 +1476,14 @@ Then follow the instructions at the top of the brief: run the model-domain skill
       </div>
       <div class="agent-split">
         <div class="panel agent-log"><div class="agent-h"><span class="lbl">Agent activity</span><span class="note" id="agentState"></span></div><div id="agentLog"></div></div>
-        <div class="panel agent-brief"><div class="agent-h"><span class="lbl">Handoffs</span>
-          <select id="agentVersion" class="ver-select" title="Saved versions"></select><span class="spacer"></span>
-          <select id="agentView" class="ver-select" title="Handoff to show"><option value="atlas">Show Atlas handoff</option><option value="collector">Show Collector handoff</option></select></div>
-          <div class="handoffs" id="agentHandoffs"></div>
+        <div class="panel agent-brief"><div class="ho-bar">
+            <div class="handoffs" id="agentHandoffs"></div>
+            <div class="ho-ver"><span class="lbl">Handoffs</span><select id="agentVersion" class="ver-select" title="Saved versions"></select></div></div>
           <div class="md" id="agentBrief"></div></div>
       </div>`;
     const d = $('#agentDomain'); d.addEventListener('input', () => { A.domain = d.value; });
     const src = $('#agentSrc'); src.addEventListener('change', () => { if (src.value && src.value !== A.server) selectAgentServer(src.value); });
     const v = $('#agentVersion'); v.addEventListener('change', () => { if (v.value) loadLatestBrief(v.value); });
-    const hv = $('#agentView'); hv.addEventListener('change', () => { A.handoff = hv.value; A.dirty = true; renderAtlas(); });
     A.dirty = true; renderAtlas();
     if (!A.info) loadAgentInfo();
     if (!A.brief && !A.running) loadLatestBrief();
@@ -1498,7 +1496,6 @@ Then follow the instructions at the top of the brief: run the model-domain skill
     if (runBtn) { runBtn.disabled = A.running || !A.server; runBtn.innerHTML = A.running ? `${icon('sparkles', 'ic-sm')}Planning…` : `${icon('sparkles', 'ic-sm')}${A.brief ? 'Plan again' : 'Plan the move'}`; }
     const st = $('#agentState'); if (st) st.textContent = A.running ? 'Running' : A.error ? 'Stopped' : A.brief ? 'Done' : '';
     const art = A.artifact;
-    const hv = $('#agentView'); if (hv) { hv.value = A.handoff; hv.disabled = A.running; }
     const vs = $('#agentVersion');
     if (vs) {
       const opts = A.versions.map((e) => `<option value="${esc(e.file)}"${art && art.file === e.file ? ' selected' : ''}>${esc(e.domain)} v${e.version} · ${esc(new Date(Date.parse(e.createdAt)).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }))}</option>`).join('');
@@ -1512,18 +1509,14 @@ Then follow the instructions at the top of the brief: run the model-domain skill
       const sig = JSON.stringify([ready && art.file, col && col.file, A.handoff]);
       if (ho.dataset.sig !== sig) {
         ho.dataset.sig = sig;
+        const card = (key, ic, title, sub, meta) => `<div class="handoff${A.handoff === key ? ' on' : ''}" data-act="agentho" data-h="${key}" role="button" tabindex="0" aria-pressed="${A.handoff === key}" title="Show the ${title} handoff">
+            <div class="ho-top"><span class="ho-ic">${icon(ic, 'ic-sm')}</span><div class="ho-t"><b>${title}</b><span>${sub}</span></div></div>
+            <div class="ho-meta">${meta}</div></div>`;
         ho.innerHTML = ready ? `
-          <div class="handoff${A.handoff === 'collector' ? ' on' : ''}">
-            <div class="ho-top"><span class="ho-ic">${icon('database', 'ic-sm')}</span><div class="ho-t"><b>Collector</b><span>Logs the server to Historian</span></div></div>
-            ${col ? `<div class="ho-meta">Instance <code>${esc(col.name)}</code> → dataset <code>${esc(col.dataset)}</code> · ${fmtNum(col.variablesLogged)} tags</div>
-              <div class="ho-acts"><button class="btn btn-outline btn-sm" data-act="agentcolprompt">${icon('copy', 'ic-sm')}Copy Gage prompt</button><span class="spacer"></span>${dlBtn(col.file, '.md', 'Download the Collector handoff')}${dlBtn(col.json, '.json', 'Download the Collector settings')}</div>`
-              : `<div class="ho-meta">Not in this version. Select Plan again to add it.</div>`}
-          </div>
-          <div class="handoff${A.handoff === 'atlas' ? ' on' : ''}">
-            <div class="ho-top"><span class="ho-ic">${icon('sparkles', 'ic-sm')}</span><div class="ho-t"><b>Atlas</b><span>Gage builds the domain</span></div></div>
-            <div class="ho-meta">Domain <code>${esc(art.domain)}</code>${art.connector ? ` · bindings use <code>${esc(art.connector)}</code>` : ''} · Gage fetches <code>${esc(art.url)}</code></div>
-            <div class="ho-acts"><button class="btn btn-outline btn-sm" data-act="agentprompt">${icon('copy', 'ic-sm')}Copy Gage prompt</button><span class="spacer"></span>${dlBtn(art.file, '.md', 'Download the Atlas handoff')}</div>
-          </div>` : '';
+          ${card('collector', 'database', 'Collector', 'Logs the server to Historian', col ? `Instance <code>${esc(col.name)}</code> → dataset <code>${esc(col.dataset)}</code> · ${fmtNum(col.variablesLogged)} tags` : 'Not in this version. Select Plan again to add it.')}
+          ${card('atlas', 'sparkles', 'Atlas', 'Gage builds the domain', `Domain <code>${esc(art.domain)}</code>${art.connector ? ` · bindings use <code>${esc(art.connector)}</code>` : ''} · Gage fetches <code>${esc(art.url)}</code>`)}
+          <div class="ho-acts">${col ? `<button class="btn btn-outline btn-sm" data-act="agentcolprompt">${icon('copy', 'ic-sm')}Copy Gage prompt</button><span class="spacer"></span>${dlBtn(col.file, '.md', 'Download the Collector handoff')}${dlBtn(col.json, '.json', 'Download the Collector settings')}` : ''}</div>
+          <div class="ho-acts"><button class="btn btn-outline btn-sm" data-act="agentprompt">${icon('copy', 'ic-sm')}Copy Gage prompt</button><span class="spacer"></span>${dlBtn(art.file, '.md', 'Download the Atlas handoff')}</div>` : '';
       }
     }
     const nearBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 60;
@@ -1757,6 +1750,8 @@ Then follow the instructions at the top of the brief: run the model-domain skill
       const k = el.dataset.key;
       if (S.openConn.has(k)) S.openConn.delete(k); else S.openConn.add(k);
       renderConnections();
+    } else if (act === 'agentho') {
+      if (S.agent.handoff !== el.dataset.h) { S.agent.handoff = el.dataset.h; S.agent.dirty = true; renderAtlas(); }
     } else if (act === 'agentsrc') {
       selectAgentServer(el.dataset.id);
     } else if (act === 'agentrun') {
@@ -1809,6 +1804,7 @@ Then follow the instructions at the top of the brief: run the model-domain skill
     if (MENU && e.key === 'Escape') { closeMenu(); return; }
     if (D && e.key === 'Escape') { closeDialog(); return; }
     if (D && e.target.closest && e.target.closest('#modal')) return;
+    if ((e.key === 'Enter' || e.key === ' ') && e.target.matches && e.target.matches('.handoff[data-act="agentho"]')) { e.preventDefault(); S.agent.handoff = e.target.dataset.h; S.agent.dirty = true; renderAtlas(); const f = document.querySelector(`.handoff[data-h="${S.agent.handoff}"]`); if (f) f.focus(); return; }
     const typing = e.target.matches('input, textarea');
     if (e.key === 'Escape' && !typing && isConnView(S.view) && lensOf(S.view).wide) { lensOf(S.view).wide = false; buildPage(); frame(true); return; }
     if (e.key === '/' && !typing) { const f = $('#filter') || $('#connFilter'); if (f) { e.preventDefault(); f.focus(); } }
@@ -1849,7 +1845,7 @@ Then follow the instructions at the top of the brief: run the model-domain skill
     try { cfg = await (await fetch('config.json', { cache: 'no-store' })).json(); } catch { cfg = {}; }
     const qs = new URLSearchParams(location.search);
     uaUrl = qs.get('gateway') || cfg.opcuaGateway || `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/stream/ws`;
-    apiBase = cfg.apiBase || (cfg.opcuaGateway ? cfg.opcuaGateway.replace(/^ws/, 'http').replace(/\/api\/opcua\/ws$/, '') : '');
+    apiBase = typeof cfg.apiBase === 'string' ? cfg.apiBase : (cfg.opcuaGateway ? cfg.opcuaGateway.replace(/^ws/, 'http').replace(/\/api\/(opcua|stream)\/ws$/, '') : '');
     if (cfg.title) { $('#appSub').textContent = cfg.title; document.title = `Timebase ${cfg.title}`; }
 
     const h = fromHash();

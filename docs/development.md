@@ -26,7 +26,7 @@ cp dev-config.example.json dev-config.json   # point opcuaGateway at a running g
 python3 dev_server.py                        # http://127.0.0.1:8790
 ```
 
-`dev_server.py` serves `site/` and replaces `config.json` with `dev-config.json`. The page still needs a gateway to talk to.
+`dev_server.py` serves `site/` and replaces `config.json` with `dev-config.json`. It forwards `/api/` requests to the gateway host in `opcuaGateway`, so connections and Move to Timebase work locally without CORS; keep `"apiBase": ""` in `dev-config.json` for that. The live stream connects to the gateway directly over WebSocket.
 
 ## Gateway
 
