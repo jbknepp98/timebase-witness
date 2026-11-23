@@ -1,0 +1,19 @@
+:80 {
+	encode gzip
+	handle /api/agent/* {
+		reverse_proxy lookout-gateway:8090 {
+			flush_interval -1
+		}
+	}
+	handle /api/* {
+		reverse_proxy lookout-gateway:8090
+	}
+	handle /briefs/* {
+		reverse_proxy lookout-gateway:8090
+	}
+	handle {
+		root * /srv
+		header Cache-Control "no-cache"
+		file_server
+	}
+}

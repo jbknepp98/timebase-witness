@@ -1,0 +1,18 @@
+# secrets and runtime state - never commit
+*.env
+!*.env.example
+master.key
+lookout-secret/
+lookout-data/
+briefs/
+connections.json
+*.pem
+*.key
+*.crt
+
+# local
+dev-config.json
+__pycache__/
+*.pyc
+.DS_Store
+.venv/

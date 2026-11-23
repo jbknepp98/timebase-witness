@@ -1,0 +1,4 @@
+{
+  "title": "Witness",
+  "opcuaGateway": "ws://<gateway-host>:8088/api/stream/ws"
+}

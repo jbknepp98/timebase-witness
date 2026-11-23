@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="color-scheme" content="dark light">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Timebase Witness</title>
+<script>
+  (function () {
+    try {
+      var stored = localStorage.getItem('tb-theme');
+      var osDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      var isDark = stored === 'dark' || (stored !== 'light' && osDark);
+      document.documentElement.classList.toggle('dark', isDark);
+      document.documentElement.style.backgroundColor = isDark ? '#121214' : '#FFFFFF';
+    } catch (e) {
+      document.documentElement.classList.add('dark');
+      document.documentElement.style.backgroundColor = '#121214';
+    }
+  }());
+</script>
+<link rel="icon" type="image/png" href="brand/timebase-icon.png">
+<link rel="apple-touch-icon" href="brand/timebase-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Poppins:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="shell" id="shell">
+  <aside class="sidebar">
+    <div class="side-head">
+      <span class="lockup">
+        <svg class="mark" viewBox="0 0 511.84 660.73" aria-hidden="true"><path d="M511.84,340.74l-.02-21.13-141.93-27.1L337.84,0l-21.13,.07-25.160,243.93L104.99,98.28l-14.74,15.15,149.33,180.81L0,320.17l.02,21.13,242.08,25.67-145.85,186.73,15.15,14.74,180.930-149.41,26.48,241.71,21.13-.07,30.17-292.53,141.73-27.4Z"/></svg>
+        <span class="words"><span class="word">Timebase</span><span class="sub" id="appSub">Witness</span></span>
+      </span>
+      <button class="icon-sm" data-act="collapse" title="Collapse sidebar" id="collapseBtn"></button>
+    </div>
+    <nav class="side-nav" id="sideNav"></nav>
+    <div class="side-foot" id="sideFoot"></div>
+  </aside>
+
+  <main class="main">
+    <div class="tabstrip">
+      <div class="tabs" id="tabs"></div>
+      <div class="tab-actions">
+        <button class="icon-btn" data-act="pause" id="pauseBtn" title="Pause updates (Space)"></button>
+        <button class="icon-btn" data-act="theme" id="themeBtn" title="Switch light or dark"></button>
+      </div>
+    </div>
+    <div class="page" id="page"></div>
+  </main>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

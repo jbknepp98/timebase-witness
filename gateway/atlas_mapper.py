@@ -1,0 +1,630 @@
+"""Move to Timebase: profile an OPC UA namespace and have Claude plan both handoffs.
+
+The gateway already holds each server's browsed address space and live values. This module
+  1. profiles it deterministically (tree, repeated equipment patterns, types, units, observed values),
+  2. runs a Claude tool loop over read-only tools so the model can drill into the namespace, and
+  3. streams the run (status, reasoning summary, tool calls, the plan) to the browser as events.
+
+Two deliverables come out of one run:
+  - the Atlas handoff: a brief for Gage in Atlas (Domain Summary in Gage's interview format, source
+    bindings for the mapper step, prerequisites outside Atlas);
+  - the Collector handoff: a logging instance for Timebase Collector. The model proposes the dataset,
+    topics, topic definition, fields and exclusion filter with propose_collector_instance; Witness
+    validates them against the namespace and fills in the connection settings itself (never the password).
+Nothing is written to Atlas, Collector or Historian from here.
+"""
+import asyncio
+import json
+import os
+import re
+import time
+from collections import defaultdict
+
+import anthropic
+
+MODEL = os.environ.get("LOOKOUT_AGENT_MODEL", "claude-opus-5-5")
+EFFORT = os.environ.get("LOOKOUT_AGENT_EFFORT", "high")
+MAX_TURNS = int(os.environ.get("LOOKOUT_AGENT_MAX_TURNS", "12"))
+
+# Snapshot of the shared Atlas vocabulary (atlas-common, isa95-equipment) the plan should reuse.
+# Gage's architect re-checks the live libraries before it builds, so this only steers the draft.
+ATLAS_VOCABULARY = {
+    "note": "Snapshot of shared Atlas libraries. Gage's architect re-inspects the live libraries before building.",
+    "atlas-common": {
+        "dataTypes": {"TVQ": {"fields": ["Timestamp: xsd:dateTime (time axis)", "Value: open - pin to xsd:double | xsd:string | xsd:boolean", "Quality: xsd:integer"],
+                              "use": "Every live/historian signal. Pin Value per property (TVQ{Value=xsd:double})."}},
+        "entityTypes": {"Tag": "Abstract-ish signal entity with Data (TVQ), Description, Format, UOM. Use only when signals are first-class things; prefer TVQ properties on equipment.",
+                        "Folder": "Plain grouping node, with folderContains."},
+        "relationships": ["contains (containment, NodeBase->NodeBase)", "connectsTo", "relatesTo", "sameAs", "feeds (abstract, derive your own)"],
+    },
+    "isa95-equipment": {
+        "entityTypes": {
+            "Equipment": "abstract root", "Enterprise": "Equipment", "Site": "Equipment", "Area": "Equipment",
+            "WorkCenter": "abstract, Equipment", "ProductionLine": "WorkCenter", "ProductionUnit": "WorkCenter (continuous/batch process unit)",
+            "StorageZone": "WorkCenter", "WorkUnit": "abstract, Equipment", "Unit": "WorkUnit (process equipment such as a tank, pasteurizer)",
+            "WorkCell": "WorkUnit (discrete station such as a filler, capper, conveyor)", "StorageUnit": "WorkUnit",
+        },
+        "relationships": {
+            "equipmentContains": "abstract Equipment->Equipment", "enterpriseContains": "Enterprise->Site", "siteContains": "Site->Area",
+            "areaContains": "Area->WorkCenter", "productionLineContains": "ProductionLine->WorkCell", "productionUnitContains": "ProductionUnit->Unit",
+            "storageZoneContains": "StorageZone->StorageUnit", "equipmentContainsTag": "Equipment->Tag",
+        },
+        "rule": "Derive equipment from the ISA-95 level it sits at; narrow the level's containment relationship rather than inventing parallel ones.",
+    },
+}
+
+SYSTEM_PROMPT = """You are the Witness namespace mapper for Timebase. You study the live address space of an industrial OPC UA server and write a modeling brief that Gage, the Timebase Atlas assistant, can build into an Atlas domain without interviewing anyone.
+
+## How Gage will use your brief
+Gage runs its model-domain pipeline: architect (plans the ontology from a Domain Summary), builder (creates types), mapper (writes .map.json instance maps with property bindings), reviewer (compiles and checks). Your Domain Summary replaces Gage's interview, so it must use Gage's exact Domain Summary format. Your Source Bindings section is what Gage's mapper uses to bind each property to live data.
+
+## Work method
+1. Call get_namespace_profile first. It lists the object tree, repeated patterns (objects that share the same set of variables) and observed values.
+2. Call inspect_branch on representative objects (one per pattern, plus anything unusual) to see each variable's data type, units, writability, description and observed values. Do not inspect every object when a pattern already covers it.
+3. Call get_atlas_vocabulary once to see which shared types to reuse.
+4. Call propose_collector_instance with the logging plan (see "Collector instance" below). It answers with how many variables each subscription matches and sample tag names; if it reports problems, fix them and call it again.
+5. Write the brief. Stop calling tools once you have what you need: be efficient, a typical server needs 4-7 tool calls.
+
+## Modeling rules (from Gage's architect)
+- Master data is an Entity Type (sites, areas, lines, equipment). Transactional/streaming data is never an entity: every live variable becomes a property ranged at atlas-common:TVQ with Value pinned: Double/Float/Int -> xsd:double, Boolean -> xsd:boolean, String -> xsd:string.
+- Objects that share the same variable set are one Entity Type, derived from the ISA-95 level they sit at (process equipment such as tanks, pasteurizers, boilers -> isa95-equipment:Unit; discrete stations such as fillers, cappers, conveyors -> isa95-equipment:WorkCell; plant -> Site; functional groupings such as Processing/Packaging/Utilities -> Area or a WorkCenter, say which and why). Name types in PascalCase without instance numbers (MixTank, not MixTank101). Name properties in PascalCase too, keeping the server's browse name where it is already a good name (LevelPct, TempSetpointC); relationships are camelCase.
+- Variables that are configuration rather than measurement (setpoints, writable values) are still TVQ properties when they come from the server; say they are setpoints in the note.
+- String variables whose observed values form a small closed set (states such as Filling/Mixing/Draining) are candidates for an Enumeration Type: list the observed values and say the list may be incomplete.
+- Units come from EngineeringUnits or a trailing [unit] in the description. Record them as a static UOM-style property only if the type needs it; otherwise put the unit in the property note.
+- Only real hierarchy uses containment. Use the ISA-95 level relationships (siteContains, areaContains, productionUnitContains, productionLineContains) where they fit. When a level is missing, narrow `isa95-equipment:equipmentContains` and name the new relationship for its containing level (e.g. `areaContainsUnit`), never after a verb unrelated to the hierarchy and never after both endpoints.
+- Simulator or diagnostic nodes (heartbeats, counters about the server itself) are not plant equipment: list them under Open Questions or leave them out and say so.
+- Never invent equipment, variables or values that are not in the namespace. If something is ambiguous, put it in Open Questions.
+- Do not raise connection credentials or security settings as open questions: the profile states the user and security policy the gateway connects with, and the Prerequisites section should repeat them.
+- The profile says how long Witness has observed the server. State lists and value ranges come only from that window: say so where it matters, without guessing at values you did not see.
+
+## Collector instance
+Besides the Atlas brief you plan a Timebase Collector OPC UA instance that logs this server's live measurements into Timebase Historian. Witness fills in the connection (URL, user, security) itself; you decide only:
+- name: the Collector instance name, PascalCase, e.g. DemoPlantOpcUa.
+- dataset: the Historian dataset to write to, PascalCase, normally the same as the name.
+- subscriptions: usually one. topics are dot-joined browse paths from under Objects with `+` (one level) and `#` (everything below, last only), e.g. `DemoPlant.#` or `DemoPlant.Processing.#`. Cover exactly the branches the profile shows; do not reach outside them.
+- topicDefinition: dot-delimited lowercase names for the leading path segments, matching the hierarchy you found, e.g. `plant.area.equipment.signal`. It must have as many segments as the typical variable path.
+- fields: metadata on every tag. Use `[Topic:key]` placeholders for the hierarchy levels (Plant, Area, Equipment...) and a constant Source naming the server product.
+- excludeRegex: a case-sensitive regex on the tag name (the dot-joined path) for variables that should not be historized: static nameplate or configuration values that never changed during observation, and simulator or server diagnostics. Use "" when everything should be logged. Setpoints that operators change are kept.
+- intervalMs: publishing interval, normally 1000.
+- notes: short bullets a reviewer should check (what you excluded and why, anything uncertain).
+
+## Binding paths
+Atlas reads this server through a Timebase Connect OPC UA connector. Its binding path for a variable is `{CONNECTOR}/{BrowsePath}` where BrowsePath is the dot-joined browse names from under Objects, e.g. `{CONNECTOR}/DemoPlant.Processing.MixTank101.LevelPct`. The tools give you each variable's binding path; write `{CONNECTOR}` literally - the connector id is filled in after the connector is created. For a series of instances, write one binding template per property using the instance-map column placeholder, e.g. `{CONNECTOR}/DemoPlant.Processing.[Unit].LevelPct`.
+
+## Output
+Reply with the brief only, as Markdown, with exactly these top-level sections in this order (no preamble):
+
+# Domain Summary: {domain name}
+Use Gage's format exactly:
+## Overview, ## Entity Types (master data) with ### {Type} (derived from {Base}) - write the Base type's prefixed name in the parentheses, no braces and - **{Property}**: {xsd type | TVQ{Value=xsd:...}} - note, ## Data Types (transactional records) (write "None - every signal is a TVQ property" if none), ## Relationship Types with ### {name} (contains|relates) and - {Source} --{name}--> {Target}, ## Library Reuse Candidates, ## Instance Patterns (### {grouping} then - {Type}: {count} instances, told apart by ...), ## Hierarchies, ## Open Questions.
+
+# Source Bindings
+Written for Gage's mapper, which authors every definition as a map (one-item maps for single instances) and keeps instance ids fully qualified.
+- One table for entity definitions: Definition id | Type | instanceId template | label template | map columns (name: data) | property -> binding template. instanceId templates are the full dot path mirroring the browse path (`DemoPlant.Processing.[Unit]`); label templates are short human-readable names from a Label column (`Mix Tank 101`), never the raw browse name and never the ancestor path.
+- One table for relationship definitions: Definition id | relationship | source template | target template | map columns. Every parent -> child series gets a row, on the same columns as the child series.
+- Then the single root instance (a plain definition with no map).
+
+# Prerequisites Outside Atlas
+What must exist before mapper's bindings resolve (the Connect OPC UA connector: server URL, user, browse depth, publishing interval; anything else you found).
+
+# Mapping Notes
+Up to 8 bullets on decisions a reviewer should check (type choices, skipped nodes, enum candidates, anything that looked inconsistent).
+
+Do not repeat the Collector plan in the brief: Witness writes the Collector handoff from your propose_collector_instance call."""
+
+TOOLS = [
+    {
+        "name": "get_namespace_profile",
+        "description": "Overview of the OPC UA server's address space: server identity, binding path template, object tree with variable counts, repeated patterns (objects sharing the same variable set, which usually means one entity type), data type and unit statistics. Call this first.",
+        "input_schema": {"type": "object", "properties": {}, "required": [], "additionalProperties": False},
+        "strict": True,
+        "eager_input_streaming": True,
+    },
+    {
+        "name": "inspect_branch",
+        "description": "Every variable under one object (recursively, up to 120): NodeId, browse path, Connect binding path, data type, units, writable or read-only, description, current value and quality, and what Witness observed (update count, rate, min/max, distinct string values). Use on representative objects.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"path": {"type": "string", "description": "Object browse path as shown in the profile, slash-separated, e.g. DemoPlant/Processing/MixTank101"}},
+            "required": ["path"],
+            "additionalProperties": False,
+        },
+        "strict": True,
+        "eager_input_streaming": True,
+    },
+    {
+        "name": "propose_collector_instance",
+        "description": "Propose the Timebase Collector OPC UA instance that logs this server into Historian. Witness validates the topics and exclusion filter against the namespace and answers with matched and excluded variable counts and sample tag names. Call again with fixes if it reports problems.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Collector instance name, PascalCase"},
+                "dataset": {"type": "string", "description": "Historian dataset name, PascalCase"},
+                "subscriptions": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "topics": {"type": "array", "items": {"type": "string"}, "description": "Dot-joined browse paths with + and # wildcards"},
+                            "topicDefinition": {"type": "string", "description": "Dot-delimited names for the leading path segments"},
+                            "intervalMs": {"type": "integer", "description": "Publishing interval in ms"},
+                            "excludeRegex": {"type": "string", "description": "Case-sensitive regex on the tag name; empty for none"},
+                            "fields": {"type": "array", "items": {"type": "object", "properties": {"name": {"type": "string"}, "value": {"type": "string"}}, "required": ["name", "value"], "additionalProperties": False}},
+                        },
+                        "required": ["topics", "topicDefinition", "intervalMs", "excludeRegex", "fields"],
+                        "additionalProperties": False,
+                    },
+                },
+                "notes": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["name", "dataset", "subscriptions", "notes"],
+            "additionalProperties": False,
+        },
+        "strict": True,
+        "eager_input_streaming": True,
+    },
+    {
+        "name": "get_atlas_vocabulary",
+        "description": "Shared Atlas library types to reuse (atlas-common TVQ/Tag/Folder and the ISA-95 equipment levels with their containment relationships).",
+        "input_schema": {"type": "object", "properties": {}, "required": [], "additionalProperties": False},
+        "strict": True,
+        "eager_input_streaming": True,
+    },
+]
+
+UNIT_RE = re.compile(r"\[([^\]]+)\]\s*$")
+
+
+def units_of(info):
+    if info.get("units"):
+        return info["units"]
+    m = UNIT_RE.search(info.get("description") or "")
+    return m.group(1) if m else None
+
+
+def clean_description(info):
+    d = UNIT_RE.sub("", info.get("description") or "").strip()
+    return d if d and d not in (info.get("name"), info.get("displayName")) else None
+
+
+def binding_path(info):
+    return "{CONNECTOR}/" + info["path"].replace("/", ".")
+
+
+class NamespaceView:
+    """Read-only view over one ServerConn for the profiler and the tools."""
+
+    def __init__(self, server):
+        self.s = server
+
+    def _children(self):
+        kids = defaultdict(list)
+        for n in self.s.nodes.values():
+            kids[n.get("parent")].append(n)
+        return kids
+
+    def var_stats(self, nid):
+        st = self.s.stats.get(nid)
+        if not st:
+            return {}
+        span = max(1e-6, st["last"] - st["first"])
+        out = {"updates": st["n"], "ratePerMin": round(st["n"] / span * 60, 2) if st["n"] > 1 else 0}
+        if st["min"] is not None:
+            out["min"], out["max"] = st["min"], st["max"]
+        if st["distinct"]:
+            out["distinctValues"] = sorted(st["distinct"])[:20]
+            if st["distinctOverflow"]:
+                out["distinctValuesTruncated"] = True
+        return out
+
+    def profile(self):
+        nodes = self.s.nodes
+        kids = self._children()
+        objects = [n for n in nodes.values() if n["nodeClass"] == "Object"]
+        variables = [n for n in nodes.values() if n["nodeClass"] == "Variable"]
+
+        def signature(obj):
+            vs = sorted((k["name"], k.get("dataType", "?")) for k in kids[obj["id"]] if k["nodeClass"] == "Variable")
+            return tuple(vs)
+
+        patterns = defaultdict(list)
+        for o in objects:
+            sig = signature(o)
+            if sig:
+                patterns[sig].append(o["path"])
+        tree = []
+        for o in objects:
+            v = [k for k in kids[o["id"]] if k["nodeClass"] == "Variable"]
+            c = [k for k in kids[o["id"]] if k["nodeClass"] == "Object"]
+            tree.append({"path": o["path"], "depth": o["path"].count("/"), "childObjects": len(c), "variables": len(v),
+                         "variableNames": [k["name"] for k in v][:40]})
+        dtypes = defaultdict(int)
+        units = defaultdict(int)
+        for v in variables:
+            dtypes[v.get("dataType", "?")] += 1
+            u = units_of(v)
+            if u:
+                units[u] += 1
+        st = self.s.status()
+        return {
+            "server": {"name": st["name"], "endpoint": st["endpoint"], "product": st["serverInfo"], "user": st["user"],
+                       "security": security_text(st)},
+            "browseRoots": st.get("browseRoots") or "everything under Objects",
+            "bindingPathTemplate": "{CONNECTOR}/{dot-joined browse path under Objects}",
+            "connectConnector": (f"{st['connector']} already serves this server; Witness fills it in for {{CONNECTOR}}, so keep writing {{CONNECTOR}} and say in Prerequisites that the connector exists."
+                                 if st.get("connector") else "No Connect connector is configured for this server yet: list creating one under Prerequisites."),
+            "totals": {"objects": len(objects), "variables": len(variables), "writableVariables": sum(1 for v in variables if v.get("writable"))},
+            "objectTree": tree,
+            "repeatedPatterns": [
+                {"objects": paths, "count": len(paths), "variables": [f"{n}:{t}" for n, t in sig]}
+                for sig, paths in sorted(patterns.items(), key=lambda kv: -len(kv[1]))
+            ],
+            "dataTypes": dict(dtypes),
+            "units": dict(units),
+            "observedForSeconds": round(time.time() - (st["connectedAt"] or time.time())),
+        }
+
+    def inspect(self, path):
+        path = path.strip().strip("/").replace(".", "/")
+        root = next((n for n in self.s.nodes.values() if n["path"] == path), None)
+        if not root:
+            close = [n["path"] for n in self.s.nodes.values() if n["nodeClass"] == "Object" and path.lower() in n["path"].lower()][:10]
+            return {"error": f"No node at '{path}'.", "didYouMean": close}
+        out = []
+        for n in self.s.nodes.values():
+            if n["nodeClass"] != "Variable" or not (n["path"] == path or n["path"].startswith(path + "/")):
+                continue
+            val = self.s.values.get(n["id"], {})
+            out.append({
+                "browsePath": n["path"], "nodeId": n["id"], "bindingPath": binding_path(n),
+                "dataType": n.get("dataType"), "units": units_of(n), "writable": bool(n.get("writable")),
+                "description": clean_description(n),
+                "value": val.get("v"), "quality": (val.get("q") or {}).get("name"),
+                "observed": self.var_stats(n["id"]),
+            })
+            if len(out) >= 120:
+                break
+        return {"object": path, "nodeId": root["id"], "variables": out, "truncated": len(out) >= 120}
+
+
+def security_text(st):
+    sec = st.get("security") or {}
+    if (sec.get("policy") or "None") == "None":
+        return "None (unencrypted channel)" + (" with a user name and password" if st.get("user") else ", anonymous")
+    return f"{sec['policy']} / {sec.get('mode')}" + (" with the server certificate pinned" if sec.get("pinned") else "") + (f", user {st['user']}" if st.get("user") else ", anonymous")
+
+
+# ---------------------------------------------------------------------- Collector handoff
+# Witness's policy names -> Timebase Collector OPC UA plugin names
+COLLECTOR_POLICY = {"None": "None", "Basic256Sha256": "Basic256Sha256",
+                    "Aes128Sha256RsaOaep": "Aes128_Sha256_RsaOaep", "Aes256Sha256RsaPss": "Aes256_Sha256_RsaPss"}
+NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,63}$")
+
+
+def topic_matches(pattern, path):
+    """Collector OPC UA topic match: dot-delimited, case-sensitive, + one level, # the rest (last only)."""
+    pat, segs = pattern.split("."), path.split(".")
+    for i, p in enumerate(pat):
+        if p == "#":
+            return i < len(segs)
+        if i >= len(segs) or (p != "+" and p != segs[i]):
+            return False
+    return len(pat) == len(segs)
+
+
+def validate_collector(server, plan):
+    """Check the model's plan against the namespace. Returns (report, problems)."""
+    variables = sorted(n["path"].replace("/", ".") for n in server.nodes.values() if n["nodeClass"] == "Variable")
+    problems, subs = [], []
+    if not NAME_RE.match(plan.get("name") or ""):
+        problems.append("name must be PascalCase letters and digits, starting with a letter")
+    if not NAME_RE.match(plan.get("dataset") or ""):
+        problems.append("dataset must be PascalCase letters and digits, starting with a letter")
+    if not plan.get("subscriptions"):
+        problems.append("at least one subscription is needed")
+    logged = set()
+    for i, sub in enumerate(plan.get("subscriptions") or []):
+        topics = [t.strip() for t in sub.get("topics") or [] if t.strip()]
+        rep = {"subscription": i + 1, "topics": {}}
+        if not topics:
+            problems.append(f"subscription {i + 1} has no topics")
+        for t in topics:
+            if "/" in t:
+                problems.append(f"topic '{t}' uses '/'; Collector topics are dot-joined")
+            if "#" in t[:-1] or ("#" in t and not t.endswith(".#") and t != "#"):
+                problems.append(f"topic '{t}': '#' may only be the last segment")
+            n = sum(1 for v in variables if topic_matches(t, v))
+            rep["topics"][t] = n
+            if n == 0:
+                problems.append(f"topic '{t}' matches no variable in the namespace")
+        matched = [v for v in variables if any(topic_matches(t, v) for t in topics)]
+        rx = sub.get("excludeRegex") or ""
+        excluded = []
+        if rx:
+            try:
+                r = re.compile(rx)
+                excluded = [v for v in matched if r.search(v)]
+            except re.error as e:
+                problems.append(f"subscription {i + 1} excludeRegex does not compile: {e}")
+        kept = [v for v in matched if v not in excluded]
+        logged.update(kept)
+        td = sub.get("topicDefinition") or ""
+        keys = [k for k in td.split(".") if k]
+        if not keys:
+            problems.append(f"subscription {i + 1} needs a topicDefinition")
+        for f in sub.get("fields") or []:
+            for key in re.findall(r"\[Topic:([^\]]+)\]", f.get("value") or ""):
+                if key not in keys:
+                    problems.append(f"field {f.get('name')} uses [Topic:{key}] but topicDefinition has no '{key}' segment")
+        depths = sorted({len(v.split(".")) for v in kept})
+        if keys and depths and len(keys) > max(depths):
+            problems.append(f"topicDefinition has {len(keys)} segments but the longest logged path has {max(depths)}")
+        if sub.get("intervalMs") is not None and not (50 <= int(sub["intervalMs"]) <= 3_600_000):
+            problems.append(f"subscription {i + 1} intervalMs should be between 50 and 3600000")
+        rep.update({"matched": len(matched), "excluded": len(excluded), "logged": len(kept),
+                    "pathDepths": depths, "sampleExcluded": excluded[:12], "sampleLogged": kept[:8]})
+        subs.append(rep)
+    report = {"ok": not problems, "problems": problems, "variablesInNamespace": len(variables),
+              "variablesLogged": len(logged), "notLogged": [v for v in variables if v not in logged][:25], "subscriptions": subs}
+    return report, problems
+
+
+def collector_instance(server, plan, report):
+    """The Collector instance as a settings document: connection from Witness, the rest from the plan."""
+    st = server.status()
+    s = server.rec["settings"]
+    policy = s.get("securityPolicy") or "None"
+    settings = {"Url": s["endpoint"]}
+    if s.get("auth") == "username" and s.get("username"):
+        settings["Username"] = s["username"]
+    settings["SecurityPolicy"] = COLLECTOR_POLICY.get(policy, policy)
+    settings["SecurityMode"] = s.get("securityMode") if policy != "None" else "None"
+    if policy != "None":
+        # Witness pins the server certificate when the user asked it to; Collector has no pin, so
+        # keep the same stance: trust it explicitly instead of auto-accepting.
+        settings["AutoAcceptUntrusted"] = not bool(s.get("serverCertThumbprint"))
+    subs = []
+    for sub in plan["subscriptions"]:
+        out = {"Interval": int(sub.get("intervalMs") or 1000),
+               "Topics": [t.strip() for t in sub["topics"] if t.strip()],
+               "TopicDefinition": sub["topicDefinition"]}
+        if sub.get("excludeRegex"):
+            out["Filter"] = sub["excludeRegex"]
+        out["Fields"] = {f["name"]: f["value"] for f in sub.get("fields") or [] if f.get("name")}
+        subs.append(out)
+    settings["Subscriptions"] = subs
+    return {
+        "name": plan["name"], "type": "OPCUA",
+        "description": f"{st['name']} ({s['endpoint']}) - planned by Witness",
+        "historian": {"dataset": plan["dataset"]},
+        "Settings": settings,
+        "needsPassword": s.get("auth") == "username",
+        "trustServerCertificate": s.get("serverCertThumbprint") or None,
+        "variablesLogged": report["variablesLogged"],
+        "notes": plan.get("notes") or [],
+    }
+
+
+def collector_brief(server, inst, settings_url):
+    st = server.status()
+    settings_json = json.dumps({"Settings": inst["Settings"]}, indent=2)
+    pw = ("Ask the user for the OPC UA password and set `Password` in the settings yourself: Witness never exports it."
+          if inst["needsPassword"] else "The server is read anonymously, so no password is needed.")
+    trust = (f"Witness pins this server's certificate (SHA-1 `{inst['trustServerCertificate']}`), so `AutoAcceptUntrusted` is off. "
+             "Before starting, trust that certificate in Collector's OPC UA trusted peer store, and make sure the server trusts Collector's application certificate."
+             if inst["trustServerCertificate"] else
+             ("`AutoAcceptUntrusted` is on because Witness accepts this server's certificate without pinning it. Make sure the server trusts Collector's application certificate."
+              if inst["Settings"]["SecurityPolicy"] != "None" else "The channel is unencrypted (security policy None)."))
+    notes = "\n".join(f"- {n}" for n in inst["notes"]) or "- None"
+    return f"""> **For Gage in Collector:** use the **setup-collector** skill to create a new **OPCUA** collector instance from this handoff. Everything below was checked by Witness against the live namespace of `{st['name']}`; do not ask the user for settings that are given here.
+
+# Collector Instance: {inst['name']}
+
+| Setting | Value |
+|---|---|
+| Plugin type | OPCUA |
+| Instance name | `{inst['name']}` |
+| Description | {inst['description']} |
+| Historian dataset | `{inst['historian']['dataset']}` (create it if it does not exist) |
+| Variables logged | {inst['variablesLogged']} |
+| Settings file | {settings_url} |
+
+## Steps
+1. `AddCollector` with type **OPCUA**, then `RenameCollector` to `{inst['name']}` and set the description above.
+2. `UpdateCollectorSettings` with the settings below. {pw}
+3. {trust}
+4. `ListHistorians`, then `SetCollectorHistorians` to link the Historian with dataset `{inst['historian']['dataset']}`.
+5. `StartCollector`, wait 10 seconds, then check `GetLogs` and `GetPreviewSnapshot`. Expect about {inst['variablesLogged']} tags.
+
+## Settings
+```json
+{settings_json}
+```
+
+## Notes from Witness
+{notes}
+"""
+
+
+def preface(server, domain):
+    st = server.status()
+    conn = st.get("connector")
+    bind = (f"For **mapper**, use the Source Bindings section. Every binding path starts with `{conn}`, the Connect OPC UA connector that already serves this server."
+            if conn else "For **mapper**, use the Source Bindings section: replace `{CONNECTOR}` with the id of the Connect OPC UA connector for this server (see Prerequisites).")
+    return f"""> **For Gage:** use the **model-domain** skill in **Build** mode for a new domain named `{domain}`.
+> The Domain Summary below was drafted by Witness from the live OPC UA server `{st['name']}` ({st['endpoint']}) and reviewed by the user - treat it as the confirmed interview output and **skip Step 1**.
+> Hand the Domain Summary to **architect**, then **builder**. {bind} Then run **reviewer** post-change.
+
+"""
+
+
+def finish(server, domain, text):
+    """Preface plus the model's brief, with the real connector id filled in when one is configured."""
+    conn = server.status().get("connector")
+    if conn:
+        text = text.replace("{CONNECTOR}", conn)
+    return preface(server, domain) + text
+
+
+def summarize_result(name, result):
+    if name == "get_namespace_profile":
+        t = result.get("totals", {})
+        return f"{t.get('objects', 0)} objects, {t.get('variables', 0)} variables, {len(result.get('repeatedPatterns', []))} variable patterns"
+    if name == "inspect_branch":
+        if "error" in result:
+            return result["error"]
+        return f"{len(result.get('variables', []))} variables under {result.get('object')}"
+    if name == "propose_collector_instance":
+        if result.get("problems"):
+            return f"{len(result['problems'])} problem(s): {result['problems'][0]}"
+        return f"{result['variablesLogged']} of {result['variablesInNamespace']} variables logged"
+    return "isa95-equipment and atlas-common types"
+
+
+class MapRun:
+    """One Move to Timebase run. Events are queued for every subscriber (SSE)."""
+
+    def __init__(self, server, domain, on_brief=None):
+        self.on_brief = on_brief   # called with the run once the brief is complete; returns artifact metadata
+        self.server = server
+        self.view = NamespaceView(server)
+        self.domain = domain
+        self.events = []
+        self.cond = asyncio.Condition()
+        self.done = False
+        self.brief = None
+        self.collector = None      # Collector instance plan once propose_collector_instance passes
+        self.nudged = False
+        self.started = time.time()
+
+    async def emit(self, ev):
+        ev["t"] = round(time.time() - self.started, 2)
+        async with self.cond:
+            self.events.append(ev)
+            self.cond.notify_all()
+
+    def run_tool(self, name, args):
+        if name == "get_namespace_profile":
+            return self.view.profile()
+        if name == "inspect_branch":
+            if not isinstance(args, dict) or not isinstance(args.get("path"), str):
+                raise ValueError("inspect_branch needs a string 'path'")
+            return self.view.inspect(args["path"])
+        if name == "get_atlas_vocabulary":
+            return ATLAS_VOCABULARY
+        if name == "propose_collector_instance":
+            if not isinstance(args, dict):
+                raise ValueError("propose_collector_instance needs an object")
+            report, problems = validate_collector(self.server, args)
+            if not problems:
+                self.collector = collector_instance(self.server, args, report)
+            return report
+        raise ValueError(f"unknown tool {name}")
+
+    async def run(self):
+        try:
+            await self._run()
+        except anthropic.AuthenticationError:
+            await self.emit({"type": "error", "message": "The Anthropic API key was rejected. Check ANTHROPIC_API_KEY in ~/mosquitto/lookout-agent.env on the Mini."})
+        except anthropic.RateLimitError:
+            await self.emit({"type": "error", "message": "Rate limited by the Anthropic API. Try again in a minute."})
+        except anthropic.APIStatusError as e:
+            await self.emit({"type": "error", "message": f"Anthropic API error {e.status_code}: {e.message}"})
+        except anthropic.APIConnectionError:
+            await self.emit({"type": "error", "message": "Could not reach the Anthropic API from the Mini."})
+        except Exception as e:  # noqa: BLE001
+            await self.emit({"type": "error", "message": f"{type(e).__name__}: {e}"})
+        finally:
+            self.done = True
+            async with self.cond:
+                self.cond.notify_all()
+
+    async def _run(self):
+        if not os.environ.get("ANTHROPIC_API_KEY") and not os.environ.get("ANTHROPIC_AUTH_TOKEN"):
+            await self.emit({"type": "error", "message": "No Anthropic API key is configured for the Witness gateway. Add ANTHROPIC_API_KEY to ~/mosquitto/lookout-agent.env on the Mini and recreate the gateway."})
+            return
+        if self.server.state != "connected" or not self.server.nodes:
+            await self.emit({"type": "error", "message": f"{self.server.cfg['name']} is not connected, so there is no namespace to map."})
+            return
+        client = anthropic.AsyncAnthropic()
+        await self.emit({"type": "status", "text": f"Mapping {self.server.cfg['name']} with {MODEL}"})
+        messages = [{"role": "user", "content": f"Plan moving the OPC UA server `{self.server.cfg['name']}` into Timebase: an Atlas domain named `{self.domain}` and a Collector instance that logs it to Historian. Investigate with the tools, propose the Collector instance, then write the brief."}]
+        usage = {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}
+        retries = 0
+        for turn in range(MAX_TURNS):
+            try:
+                async with client.beta.messages.stream(
+                    model=MODEL,
+                    max_tokens=64000,
+                    system=SYSTEM_PROMPT,
+                    tools=TOOLS,
+                    messages=messages,
+                    thinking={"type": "adaptive", "display": "summarized"},
+                    output_config={"effort": EFFORT},
+                    cache_control={"type": "ephemeral"},
+                    betas=["server-side-fallback-2026-07-01"],
+                    fallbacks="default",
+                ) as stream:
+                    async for event in stream:
+                        if event.type == "content_block_start" and event.content_block.type == "thinking":
+                            await self.emit({"type": "thinking_start"})
+                        elif event.type == "content_block_delta":
+                            if event.delta.type == "thinking_delta" and event.delta.thinking:
+                                await self.emit({"type": "thinking", "delta": event.delta.thinking})
+                            elif event.delta.type == "text_delta":
+                                await self.emit({"type": "text", "delta": event.delta.text})
+                    response = await stream.get_final_message()
+                retries = 0
+            except ValueError:
+                # tool input JSON the SDK could not parse at all: re-issue the turn (bounded)
+                retries += 1
+                if retries > 2:
+                    raise
+                continue
+            u = response.usage
+            usage["input"] += u.input_tokens or 0
+            usage["output"] += u.output_tokens or 0
+            usage["cacheRead"] += getattr(u, "cache_read_input_tokens", 0) or 0
+            usage["cacheWrite"] += getattr(u, "cache_creation_input_tokens", 0) or 0
+
+            if response.stop_reason == "pause_turn":
+                messages.append({"role": "assistant", "content": response.content})
+                continue
+            if response.stop_reason == "refusal":
+                await self.emit({"type": "error", "message": "The model declined this request."})
+                return
+            tool_uses = [b for b in response.content if b.type == "tool_use"]
+            if not tool_uses and not self.collector and not self.nudged and response.stop_reason == "end_turn":
+                self.nudged = True
+                await self.emit({"type": "status", "text": "Asking for the Collector plan before finishing"})
+                messages.append({"role": "assistant", "content": response.content})
+                messages.append({"role": "user", "content": "Before the brief is final, call propose_collector_instance with the Collector logging plan. Then reply with the full brief again."})
+                continue
+            if not tool_uses:
+                text = "".join(b.text for b in response.content if b.type == "text").strip()
+                if response.stop_reason == "max_tokens":
+                    await self.emit({"type": "status", "text": "The brief hit the output limit and may be cut off."})
+                self.brief = finish(self.server, self.domain, text)
+                artifact = None
+                if self.on_brief:
+                    try:
+                        artifact = self.on_brief(self)
+                    except OSError as e:
+                        await self.emit({"type": "status", "text": f"The brief could not be saved as a file: {e}"})
+                await self.emit({"type": "done", "brief": self.brief, "artifact": artifact, "usage": usage, "model": response.model, "turns": turn + 1})
+                return
+            if response.stop_reason == "max_tokens":
+                raise RuntimeError("a tool call was cut off by the output limit")
+            results = []
+            for b in tool_uses:
+                await self.emit({"type": "tool", "name": b.name, "input": b.input if isinstance(b.input, dict) else {}})
+                try:
+                    res = self.run_tool(b.name, b.input)
+                    await self.emit({"type": "tool_result", "name": b.name, "summary": summarize_result(b.name, res)})
+                    results.append({"type": "tool_result", "tool_use_id": b.id, "content": json.dumps(res, default=str)})
+                except Exception as e:  # noqa: BLE001
+                    await self.emit({"type": "tool_result", "name": b.name, "summary": f"error: {e}", "error": True})
+                    results.append({"type": "tool_result", "tool_use_id": b.id, "is_error": True, "content": str(e)})
+            messages.append({"role": "assistant", "content": response.content})
+            messages.append({"role": "user", "content": results})
+        await self.emit({"type": "error", "message": f"Stopped after {MAX_TURNS} model turns without a finished brief."})
