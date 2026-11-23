@@ -24,10 +24,12 @@ rebuild=no
 git diff --quiet "$before" "$after" -- ../gateway || rebuild=yes
 
 if [[ $rebuild == yes ]]; then
+  # keep the image being replaced, so the rollback below always has something to point at
+  "$DOCKER" image inspect witness-gateway:current >/dev/null 2>&1 && "$DOCKER" tag witness-gateway:current witness-gateway:previous
   "$DOCKER" compose build -q gateway
   "$DOCKER" tag witness-gateway:current "witness-gateway:git-$after"
   echo "Gateway rebuilt (witness-gateway:git-$after); restarting. To roll back:"
-  echo "  $DOCKER tag witness-gateway:git-$before witness-gateway:current && $DOCKER compose up -d --force-recreate gateway"
+  echo "  $DOCKER tag witness-gateway:previous witness-gateway:current && $DOCKER compose up -d --force-recreate gateway"
   "$DOCKER" compose up -d --force-recreate gateway
 else
   echo "Gateway unchanged; page updated in place."
