@@ -489,12 +489,16 @@ def connect_plan(server, inst, owner):
         types[t["dataType"]] += 1
         if t["units"]:
             units[t["units"]] += 1
-    # hierarchy fields: the [Topic:key] fields, with how many distinct values each takes
-    field_values = defaultdict(set)
-    for t in tags:
-        for k, v in t["fields"].items():
-            field_values[k].add(v)
-    fields = [{"name": k, "distinct": len(v), "examples": sorted(v)[:6]} for k, v in field_values.items()]
+    # fields per subscription: each has its own topic definition, so its tags carry their own field set
+    fields = []
+    for i, sub in enumerate(subs):
+        mine = [t for t in tags if owner[t["name"]] == i]
+        values = defaultdict(set)
+        for t in mine:
+            for k, v in t["fields"].items():
+                values[k].add(v)
+        fields.append({"topics": sub["Topics"], "topicDefinition": sub.get("TopicDefinition") or "", "tags": len(mine),
+                       "fields": [{"name": k, "distinct": len(v), "examples": sorted(v)[:6]} for k, v in values.items()]})
     # one sample object per signal pattern (objects that log the same set of signals)
     groups = defaultdict(list)
     for t in tags:
@@ -520,7 +524,12 @@ def connect_brief(server, plan, settings_url):
     settings_json = json.dumps({"Settings": plan["Settings"]}, indent=2)
     types = ", ".join(f"{k} {v}" for k, v in sorted(plan["dataTypes"].items(), key=lambda kv: -kv[1])) or "none"
     units = ", ".join(f"`{k}` ({v})" for k, v in sorted(plan["units"].items(), key=lambda kv: -kv[1])[:15]) or "none reported by the server"
-    fields = "\n".join(f"| `{f['name']}` | {f['distinct']} | {', '.join(f'`{e}`' for e in f['examples'])}{' ...' if f['distinct'] > len(f['examples']) else ''} |" for f in plan["fields"]) or "| (none) | | |"
+    blocks = []
+    for grp in plan["fields"]:
+        rows = "\n".join(f"| `{f['name']}` | {f['distinct']} | {', '.join(f'`{e}`' for e in f['examples'])}{' ...' if f['distinct'] > len(f['examples']) else ''} |" for f in grp["fields"]) or "| (none) | | |"
+        topics = ", ".join(f"`{t}`" for t in grp["topics"])
+        blocks.append(f"Tags from {topics} ({grp['tags']} tags, topic definition `{grp['topicDefinition']}`):\n\n| Field | Distinct values | Examples |\n|---|---|---|\n{rows}")
+    fields = "\n\n".join(blocks)
     sample_rows = []
     for smp in plan["samples"]:
         sample_rows.append(f"\n**{smp['example']}** - {smp['objects']} object{'s log' if smp['objects'] != 1 else ' logs'} this set of signals\n\n| Tag name | Server data type | Units | Binding path |\n|---|---|---|---|")
@@ -560,10 +569,8 @@ def connect_brief(server, plan, settings_url):
 
 **Per-tag binding path** through this connector: `<connector id>/{ds}/<tag name>`. Only per-tag paths can be subscribed; `<connector id>/{ds}` is the catalog (one row per tag).
 
-**Fields** Collector writes on every tag:
+**Fields** Collector writes on each tag. Every Collector subscription has its own topic definition, so each one's tags carry their own set:
 
-| Field | Distinct values | Examples |
-|---|---|---|
 {fields}
 
 **Data types** (as the server reports them): {types}.

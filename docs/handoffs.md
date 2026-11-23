@@ -56,7 +56,7 @@ The Collector container has no curl or Python, so **Copy Gage prompt** puts the 
 The files are `<domain>-connect-vN.md` and `<domain>-connect-vN.json`. Witness writes this one itself from the checked Collector plan; the agent is not involved. It describes:
 
 - a **Timebase.Historian** connector that reads the Collector's dataset: Historian host, port and TLS, sign-in as the Connect host, and one dataset entry. No secrets are needed;
-- **what the dataset looks like**: tag names (the dot-joined browse path, e.g. `DemoPlant.Processing.MixTank101.LevelPct`), the fields Collector writes on every tag (from the topic definition, e.g. Plant, Area, Equipment) with their values, data types, units, and sample tags for each group of objects that log the same signals;
+- **what the dataset looks like**: tag names (the dot-joined browse path, e.g. `DemoPlant.Processing.MixTank101.LevelPct`), the fields Collector writes on each tag, listed per Collector subscription since each has its own topic definition (e.g. Plant, Area, Equipment), with their values, data types, units, and sample tags for each group of objects that log the same signals;
 - the per-tag binding path through the connector, `<connector id>/<dataset>/<tag name>`.
 
 If a Historian connector already exists, Gage adds the dataset to it instead of creating another. The handoff asks Gage to report the connector id, which the Atlas handoff needs.
