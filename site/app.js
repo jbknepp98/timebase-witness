@@ -1509,14 +1509,15 @@ Then follow the instructions at the top of the brief: run the model-domain skill
       const sig = JSON.stringify([ready && art.file, col && col.file, A.handoff]);
       if (ho.dataset.sig !== sig) {
         ho.dataset.sig = sig;
-        const card = (key, ic, title, sub, meta) => `<div class="handoff${A.handoff === key ? ' on' : ''}" data-act="agentho" data-h="${key}" role="button" tabindex="0" aria-pressed="${A.handoff === key}" title="Show the ${title} handoff">
+        const card = (key, ic, title, sub, meta, acts) => `<div class="handoff${A.handoff === key ? ' on' : ''}" data-act="agentho" data-h="${key}" role="button" tabindex="0" aria-pressed="${A.handoff === key}" title="Show the ${title} handoff">
             <div class="ho-top"><span class="ho-ic">${icon(ic, 'ic-sm')}</span><div class="ho-t"><b>${title}</b><span>${sub}</span></div></div>
-            <div class="ho-meta">${meta}</div></div>`;
+            <div class="ho-meta">${meta}</div>
+            ${acts ? `<div class="ho-acts">${acts}</div>` : ''}</div>`;
         ho.innerHTML = ready ? `
-          ${card('collector', 'database', 'Collector', 'Logs the server to Historian', col ? `Instance <code>${esc(col.name)}</code> → dataset <code>${esc(col.dataset)}</code> · ${fmtNum(col.variablesLogged)} tags` : 'Not in this version. Select Plan again to add it.')}
-          ${card('atlas', 'sparkles', 'Atlas', 'Gage builds the domain', `Domain <code>${esc(art.domain)}</code>${art.connector ? ` · bindings use <code>${esc(art.connector)}</code>` : ''} · Gage fetches <code>${esc(art.url)}</code>`)}
-          <div class="ho-acts">${col ? `<button class="btn btn-outline btn-sm" data-act="agentcolprompt">${icon('copy', 'ic-sm')}Copy Gage prompt</button><span class="spacer"></span>${dlBtn(col.file, '.md', 'Download the Collector handoff')}${dlBtn(col.json, '.json', 'Download the Collector settings')}` : ''}</div>
-          <div class="ho-acts"><button class="btn btn-outline btn-sm" data-act="agentprompt">${icon('copy', 'ic-sm')}Copy Gage prompt</button><span class="spacer"></span>${dlBtn(art.file, '.md', 'Download the Atlas handoff')}</div>` : '';
+          ${card('collector', 'database', 'Collector', 'Logs the server to Historian', col ? `Instance <code>${esc(col.name)}</code> → dataset <code>${esc(col.dataset)}</code> · ${fmtNum(col.variablesLogged)} tags` : 'Not in this version. Select Plan again to add it.',
+            col ? `<button class="btn btn-outline btn-sm" data-act="agentcolprompt">${icon('copy', 'ic-sm')}Copy Gage prompt</button><span class="spacer"></span>${dlBtn(col.file, '.md', 'Download the Collector handoff')}${dlBtn(col.json, '.json', 'Download the Collector settings')}` : '')}
+          ${card('atlas', 'sparkles', 'Atlas', 'Gage builds the domain', `Domain <code>${esc(art.domain)}</code>${art.connector ? ` · bindings use <code>${esc(art.connector)}</code>` : ''} · Gage fetches <code>${esc(art.url)}</code>`,
+            `<button class="btn btn-outline btn-sm" data-act="agentprompt">${icon('copy', 'ic-sm')}Copy Gage prompt</button><span class="spacer"></span>${dlBtn(art.file, '.md', 'Download the Atlas handoff')}`)}` : '';
       }
     }
     const nearBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 60;
@@ -1751,6 +1752,7 @@ Then follow the instructions at the top of the brief: run the model-domain skill
       if (S.openConn.has(k)) S.openConn.delete(k); else S.openConn.add(k);
       renderConnections();
     } else if (act === 'agentho') {
+      if (e.target.closest('a, button')) return;
       if (S.agent.handoff !== el.dataset.h) { S.agent.handoff = el.dataset.h; S.agent.dirty = true; renderAtlas(); }
     } else if (act === 'agentsrc') {
       selectAgentServer(el.dataset.id);

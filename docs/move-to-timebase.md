@@ -6,7 +6,7 @@
 
 1. Pick the server in the **Namespace** dropdown.
 2. Start the run. Progress streams in as the agent works. A run takes about 90 seconds and uses roughly 20k input and 11k output tokens.
-3. When it finishes, select the **Collector** or **Atlas** card to show that handoff below. The selected card has a Timebase Blue border. Under each card are its **Copy Gage prompt** button and download buttons. The **Handoffs** dropdown on the right picks a saved version.
+3. When it finishes, select the **Collector** or **Atlas** card to show that handoff below. The selected card has a Timebase Blue border. Each card has its own **Copy Gage prompt** button and download buttons. The **Handoffs** dropdown on the right picks a saved version.
 
 Let the gateway watch the server for a few minutes before running. The agent relies on the observed state lists and value ranges, and these reset when the gateway restarts.
 
