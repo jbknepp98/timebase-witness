@@ -1,0 +1,12 @@
+{"instances": [
+  {"name": "WitnessProbeMqtt", "type": "MQTT", "dataset": "WitnessProbeMqtt", "Settings": {
+    "Host": "witness-probe-broker", "Port": 1883, "UseTls": false, "ClientId": "witness-probe-mqtt",
+    "Subscriptions": [
+      {"Type": "Simple", "QoS": "AtLeastOnce", "Topics": ["probe/simple/#"], "TagnameDelimiter": ".", "TopicDefinition": "probe/kind/line/equipment", "Filter": "", "Fields": {"Line": "[Topic:line]", "Equipment": "[Topic:equipment]", "Shape": "Simple"}},
+      {"Type": "JsonSimple", "QoS": "AtLeastOnce", "Topics": ["probe/jsonsimple/#"], "TagnameIncludesTopic": true, "TagnameDelimiter": ".", "TimestampFields": ["payload.timestamp", "emitTime", "ts"], "TimestampType": "String", "TopicDefinition": "probe/kind/a/b/c", "Filter": "", "Fields": {"A": "[Topic:a]", "B": "[Topic:b]", "Uri": "[Payload:instanceUri]", "Shape": "JsonSimple"}},
+      {"Type": "JsonStructured", "QoS": "AtLeastOnce", "Topics": ["probe/structured/#"], "TagnameIncludesTopic": true, "TagnameDelimiter": ".", "ValueField": "value", "QualityField": "quality", "UOMFields": ["units"], "TimestampFields": ["timestamp"], "TimestampType": "String", "IgnoreParts": ["probe.structured."], "TopicDefinition": "probe/kind/plant/area/equipment/signal", "Filter": "", "Fields": {"Plant": "[Topic:plant]", "Area": "[Topic:area]", "Equipment": "[Topic:equipment]", "Shape": "JsonStructured"}},
+      {"Type": "JsonStructured", "QoS": "AtLeastOnce", "Topics": ["probe/structuredarray/#"], "TagnameIncludesTopic": false, "TagnameDelimiter": ".", "TagnameFields": ["name"], "ValueField": "value", "QualityField": "properties.Quality.value", "UOMFields": ["uom"], "TimestampFields": ["timestamp"], "TimestampType": "UNIXMilliseconds", "Filter": "", "Fields": {"Shape": "JsonStructuredArray"}}]}},
+  {"name": "WitnessProbeSpb", "type": "SparkplugB", "dataset": "WitnessProbeSpb", "Settings": {
+    "Host": "witness-probe-broker", "Port": 1883, "UseTls": false, "ClientId": "witness-probe-spb",
+    "Subscriptions": [{"Type": "Simple", "QoS": "AtLeastOnce", "Topics": ["spBv1.0/ProbeGroup/#"], "Filter": "", "SkipBirthAndSequenceValidation": false, "IncludeTransientMetrics": false, "IncludeHousekeepingMetrics": true}]}}
+]}

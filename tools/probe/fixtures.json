@@ -1,0 +1,97 @@
+{
+ "probe/_meta/structured/DemoPlant/Utilities/Boiler": {
+  "payload": "{\"typeDefinition\": \"BoilerType\", \"description\": \"Boiler 1\", \"children\": [\"SteamPressureBar\", \"State\"]}",
+  "binary": false,
+  "retain": true
+ },
+ "probe/_meta/structured/DemoPlant/Utilities/Boiler/SteamPressureBar": {
+  "payload": "{\"dataType\": \"Double\", \"units\": \"bar\", \"description\": \"Steam header pressure\", \"typeDefinition\": \"BaseDataVariableType\"}",
+  "binary": false,
+  "retain": true
+ },
+ "probe/_meta/structured/DemoPlant/Utilities/Boiler/State": {
+  "payload": "{\"dataType\": \"String\", \"description\": \"Boiler state\", \"typeDefinition\": \"BaseDataVariableType\"}",
+  "binary": false,
+  "retain": true
+ },
+ "probe/_meta/_types/BoilerType": {
+  "payload": "{\"description\": \"Fire-tube boiler\", \"variables\": {\"SteamPressureBar\": {\"dataType\": \"Double\"}, \"State\": {\"dataType\": \"String\"}}}",
+  "binary": false,
+  "retain": true
+ },
+ "spBv1.0/ProbeGroup/NBIRTH/Gateway1": {
+  "payload": "CMjtmNmgNBISCgViZFNlcRjI7ZjZoDQgBFgAEiEKFE5vZGUgQ29udHJvbC9SZWJpcnRoGMjtmNmgNCALcAASfAoNX3R5cGVzXy9Nb3RvchjI7ZjZoDQgE5IBYQoDMS4wEiYKBVNwZWVkIApKEgoHZW5nVW5pdBIHCAxCA3JwbWkAAAAAAAAAABINCgdSdW5uaW5nIAtwABIRCgtTdGF0dXMvQ29kZSADUAAaDgoFUmF0ZWQQDEIDNWtXKAESwgEKDF90eXBlc18vUHVtcBjI7ZjZoDQgE5IBpwEKAzIuMRImCgRGbG93IApKEwoHZW5nVW5pdBIICAxCBG0zL2hpAAAAAAAAAAASXQoFTW90b3IgE5IBURImCgVTcGVlZCAKShIKB2VuZ1VuaXQSBwgMQgNycG1pAAAAAAAAAAASDQoHUnVubmluZyALcAASEQoLU3RhdHVzL0NvZGUgA1AAIgVNb3RvchoXCgdTZXJ2aWNlEAxCCkNJUCBzdXBwbHkoARIVCgZVcHRpbWUQARjI7ZjZoDQgBFgAEjcKD0RpYWdub3N0aWNzL0NQVRACGMjtmNmgNCAKShAKB2VuZ1VuaXQSBQgMQgElaQAAAAAAAClAGAA=",
+  "binary": true,
+  "retain": false
+ },
+ "spBv1.0/ProbeGroup/DBIRTH/Gateway1/Filler01": {
+  "payload": "CMjtmNmgNBI0CgpMaW5lL1NwZWVkEAoYyO2Y2aA0IApKEgoHZW5nVW5pdBIHCAxCA2JwbWkAAAAAAABeQBIgCgpMaW5lL1N0YXRlEAsYyO2Y2aA0IAx6B1J1bm5pbmcSMgoLVGVtcGVyYXR1cmUQDBjI7ZjZoDQgCUoTCgdlbmdVbml0EggIDEIEZGVnQ2UAAKxBEhQKBUNvdW50EA0YyO2Y2aA0IANQABJ+CgZNb3RvcjEQDhjI7ZjZoDQgE5IBaAoDMS4wEiYKBVNwZWVkIApKEgoHZW5nVW5pdBIHCAxCA3JwbWkAAAAAAKiWQBINCgdSdW5uaW5nIAtwARIRCgtTdGF0dXMvQ29kZSADUAAaEAoFUmF0ZWQQDEIFNy41a1ciBU1vdG9yEqgBCgVQdW1wMRAPGMjtmNmgNCATkgGSAQoDMi4xEiYKBEZsb3cgCkoTCgdlbmdVbml0EggIDEIEbTMvaGkAAAAAAABFQBJdCgVNb3RvciATkgFREiYKBVNwZWVkIApKEgoHZW5nVW5pdBIHCAxCA3JwbWkAAAAAAKCOQBINCgdSdW5uaW5nIAtwARIRCgtTdGF0dXMvQ29kZSADUAAiBU1vdG9yIgRQdW1wEh8KB1NjcmF0Y2gQEBjI7ZjZoDQgCjABaQAAAAAAAPA/EmsKC0JhdGNoL1N0ZXBzEBEYyO2Y2aA0IBCKAVAIAxIEU3RlcBIIU2V0cG9pbnQSBE5hbWUYAxgKGAwiFwoCCAEKCSEAAAAAACBSQAoGMgRIZWF0IhcKAggCCgkhAAAAAABAVUAKBjIESG9sZBIrCgtWYWx2ZXMvT3BlbhASGMjtmNmgNCAYggEQAQAAAAAAAAABAAAAAQAAABIbCgdMYXN0Q2lwEBMYyO2Y2aA0IA1YyJC916A0GAE=",
+  "binary": true,
+  "retain": false
+ },
+ "probe/simple/Line1/Motor1/Temp": {
+  "payload": "70.50",
+  "binary": false,
+  "retain": true
+ },
+ "probe/simple/Line1/Motor1/State": {
+  "payload": "Running",
+  "binary": false,
+  "retain": true
+ },
+ "probe/simple/Line1/Motor1/Run": {
+  "payload": "true",
+  "binary": false,
+  "retain": true
+ },
+ "probe/jsonsimple/Line1/Motors": {
+  "payload": "{\"payload\": {\"timestamp\": \"2026-11-24T01:23:03.496233Z\"}, \"motor1\": {\"rpm\": 23.1, \"location\": {\"long\": 12.3, \"lat\": 34.7}}, \"data\": [{\"motor2\": {\"rpm\": 28.1}}], \"state\": \"Running\", \"ok\": true}",
+  "binary": false,
+  "retain": true
+ },
+ "probe/jsonsimple/Assets/MixTank/MX-101": {
+  "payload": "{\"instanceUri\": \"MX-101\", \"emitTime\": \"2026-11-24T01:23:03.496233Z\", \"Level\": {\"Value\": 51.0, \"Quality\": 192, \"Timestamp\": \"2026-11-24T01:23:03.496233Z\"}, \"Manufacturer\": \"Acme\", \"Orders\": [{\"Id\": \"MO-1\", \"Hours\": 2.5}, {\"Id\": \"MO-2\", \"Hours\": 1.0}]}",
+  "binary": false,
+  "retain": true
+ },
+ "probe/jsonsimple/Line2/Press": {
+  "payload": "{\"ts\": \"2026-11-24T01:23:03.496233Z\", \"pressure\": {\"value\": 4.21, \"units\": \"bar\"}, \"cycleCount\": 18}",
+  "binary": false,
+  "retain": true
+ },
+ "probe/structured/DemoPlant/Utilities/Boiler/SteamPressureBar": {
+  "payload": "{\"value\": 8.1, \"timestamp\": \"2026-11-24T01:23:03.496233Z\", \"quality\": 192, \"status\": \"Good\", \"units\": \"bar\"}",
+  "binary": false,
+  "retain": true
+ },
+ "probe/structured/DemoPlant/Utilities/Boiler/State": {
+  "payload": "{\"value\": \"Firing\", \"timestamp\": \"2026-11-24T01:23:03.496233Z\", \"quality\": 192, \"status\": \"Good\"}",
+  "binary": false,
+  "retain": true
+ },
+ "probe/structuredarray/Edge1": {
+  "payload": "{\"payload\": {\"timestamp\": 1795483383496, \"metrics\": [{\"name\": \"Tag 1\", \"timestamp\": 1795483383496, \"dataType\": \"Int32\", \"properties\": {\"Quality\": {\"type\": \"Int32\", \"value\": 192}}, \"value\": 1}, {\"name\": \"Tag 2\", \"timestamp\": 1795483383496, \"dataType\": \"Boolean\", \"properties\": {\"Quality\": {\"type\": \"Int32\", \"value\": 192}}, \"value\": false}, {\"name\": \"Tag 3\", \"timestamp\": 1795483383496, \"dataType\": \"Float\", \"uom\": \"kW\", \"properties\": {\"Quality\": {\"type\": \"Int32\", \"value\": 192}}, \"value\": 1.3}], \"seq\": 1}}",
+  "binary": false,
+  "retain": true
+ },
+ "probe/csv/Line1": {
+  "payload": "72.6,1450,Running",
+  "binary": false,
+  "retain": true
+ },
+ "timebase/probe-domain/MixTank/MX-201": {
+  "payload": "{\"instanceUri\": \"MX-201\", \"anchor\": \"2026-11-24T01:23:03.496233Z\", \"emitTime\": \"2026-11-24T01:23:03.496233Z\", \"Level\": {\"Value\": 40.5, \"Timestamp\": \"2026-11-24T01:23:03.496233Z\", \"Quality\": 192}, \"Manufacturer\": \"Acme\"}",
+  "binary": false,
+  "retain": false
+ },
+ "spBv1.0/ProbeGroup/DDATA/Gateway1/Filler01": {
+  "payload": "CMjtmNmgNBIUEAoYyO2Y2aA0IAppvm5+WvIfXkASEBAMGMjtmNmgNCAJZXXMrEESDRANGMjtmNmgNCADUAESKRAOGMjtmNmgNCATkgEbEhIKBVNwZWVkIAppr5uflvyvlkAiBU1vdG9yElAQDxjI7ZjZoDQgE5IBQhIRCgRGbG93IApp5sVlV8cMRUASJwoFTW90b3IgE5IBGxISCgVTcGVlZCAKaa+bn5b8p45AIgVNb3RvciIEUHVtcBgC",
+  "binary": true,
+  "retain": false
+ },
+ "spBv1.0/ProbeGroup/NDATA/Gateway1": {
+  "payload": "CMjtmNmgNBINEAEYyO2Y2aA0IARYARIUEAIYyO2Y2aA0IApplheXXR0zKUAYAw==",
+  "binary": true,
+  "retain": false
+ }
+}

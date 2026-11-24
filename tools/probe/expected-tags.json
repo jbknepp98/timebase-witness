@@ -1,0 +1,494 @@
+{
+ "_source": "Historian GetTags after a probe run, Timebase Collector 2.0.861, 2026-11-24. Do not edit by hand: regenerate from a probe run.",
+ "WitnessProbeMqtt": [
+  {
+   "name": "DemoPlant.Utilities.Boiler.State",
+   "type": "String",
+   "uom": null,
+   "fields": {
+    "Area": "Utilities",
+    "Equipment": "Boiler",
+    "Plant": "DemoPlant",
+    "Shape": "JsonStructured"
+   }
+  },
+  {
+   "name": "DemoPlant.Utilities.Boiler.SteamPressureBar",
+   "type": "Double",
+   "uom": "bar",
+   "fields": {
+    "Area": "Utilities",
+    "Equipment": "Boiler",
+    "Plant": "DemoPlant",
+    "Shape": "JsonStructured"
+   }
+  },
+  {
+   "name": "Tag 1",
+   "type": "Double",
+   "uom": null,
+   "fields": {
+    "Shape": "JsonStructuredArray"
+   }
+  },
+  {
+   "name": "Tag 2",
+   "type": "Boolean",
+   "uom": null,
+   "fields": {
+    "Shape": "JsonStructuredArray"
+   }
+  },
+  {
+   "name": "Tag 3",
+   "type": "Double",
+   "uom": "kW",
+   "fields": {
+    "Shape": "JsonStructuredArray"
+   }
+  },
+  {
+   "name": "probe.jsonsimple.Assets.MixTank.MX-101.Hours",
+   "type": "Double",
+   "uom": null,
+   "fields": {
+    "A": "Assets",
+    "B": "MixTank",
+    "Shape": "JsonSimple",
+    "Uri": "MX-101"
+   }
+  },
+  {
+   "name": "probe.jsonsimple.Assets.MixTank.MX-101.Id",
+   "type": "String",
+   "uom": null,
+   "fields": {
+    "A": "Assets",
+    "B": "MixTank",
+    "Shape": "JsonSimple",
+    "Uri": "MX-101"
+   }
+  },
+  {
+   "name": "probe.jsonsimple.Assets.MixTank.MX-101.Level.Quality",
+   "type": "Double",
+   "uom": null,
+   "fields": {
+    "A": "Assets",
+    "B": "MixTank",
+    "Shape": "JsonSimple",
+    "Uri": "MX-101"
+   }
+  },
+  {
+   "name": "probe.jsonsimple.Assets.MixTank.MX-101.Level.Timestamp",
+   "type": "String",
+   "uom": null,
+   "fields": {
+    "A": "Assets",
+    "B": "MixTank",
+    "Shape": "JsonSimple",
+    "Uri": "MX-101"
+   }
+  },
+  {
+   "name": "probe.jsonsimple.Assets.MixTank.MX-101.Level.Value",
+   "type": "Double",
+   "uom": null,
+   "fields": {
+    "A": "Assets",
+    "B": "MixTank",
+    "Shape": "JsonSimple",
+    "Uri": "MX-101"
+   }
+  },
+  {
+   "name": "probe.jsonsimple.Assets.MixTank.MX-101.Manufacturer",
+   "type": "String",
+   "uom": null,
+   "fields": {
+    "A": "Assets",
+    "B": "MixTank",
+    "Shape": "JsonSimple",
+    "Uri": "MX-101"
+   }
+  },
+  {
+   "name": "probe.jsonsimple.Assets.MixTank.MX-101.instanceUri",
+   "type": "String",
+   "uom": null,
+   "fields": {
+    "A": "Assets",
+    "B": "MixTank",
+    "Shape": "JsonSimple",
+    "Uri": "MX-101"
+   }
+  },
+  {
+   "name": "probe.jsonsimple.Line1.Motors.motor1.location.lat",
+   "type": "Double",
+   "uom": null,
+   "fields": {
+    "A": "Line1",
+    "B": "Motors",
+    "Shape": "JsonSimple",
+    "Uri": ""
+   }
+  },
+  {
+   "name": "probe.jsonsimple.Line1.Motors.motor1.location.long",
+   "type": "Double",
+   "uom": null,
+   "fields": {
+    "A": "Line1",
+    "B": "Motors",
+    "Shape": "JsonSimple",
+    "Uri": ""
+   }
+  },
+  {
+   "name": "probe.jsonsimple.Line1.Motors.motor1.rpm",
+   "type": "Double",
+   "uom": null,
+   "fields": {
+    "A": "Line1",
+    "B": "Motors",
+    "Shape": "JsonSimple",
+    "Uri": ""
+   }
+  },
+  {
+   "name": "probe.jsonsimple.Line1.Motors.motor2.rpm",
+   "type": "Double",
+   "uom": null,
+   "fields": {
+    "A": "Line1",
+    "B": "Motors",
+    "Shape": "JsonSimple",
+    "Uri": ""
+   }
+  },
+  {
+   "name": "probe.jsonsimple.Line1.Motors.ok",
+   "type": "Boolean",
+   "uom": null,
+   "fields": {
+    "A": "Line1",
+    "B": "Motors",
+    "Shape": "JsonSimple",
+    "Uri": ""
+   }
+  },
+  {
+   "name": "probe.jsonsimple.Line1.Motors.state",
+   "type": "String",
+   "uom": null,
+   "fields": {
+    "A": "Line1",
+    "B": "Motors",
+    "Shape": "JsonSimple",
+    "Uri": ""
+   }
+  },
+  {
+   "name": "probe.jsonsimple.Line2.Press.cycleCount",
+   "type": "Double",
+   "uom": null,
+   "fields": {
+    "A": "Line2",
+    "B": "Press",
+    "Shape": "JsonSimple",
+    "Uri": ""
+   }
+  },
+  {
+   "name": "probe.jsonsimple.Line2.Press.pressure.units",
+   "type": "String",
+   "uom": null,
+   "fields": {
+    "A": "Line2",
+    "B": "Press",
+    "Shape": "JsonSimple",
+    "Uri": ""
+   }
+  },
+  {
+   "name": "probe.jsonsimple.Line2.Press.pressure.value",
+   "type": "Double",
+   "uom": null,
+   "fields": {
+    "A": "Line2",
+    "B": "Press",
+    "Shape": "JsonSimple",
+    "Uri": ""
+   }
+  },
+  {
+   "name": "probe.simple.Line1.Motor1.Run",
+   "type": "Boolean",
+   "uom": null,
+   "fields": {
+    "Equipment": "Motor1",
+    "Line": "Line1",
+    "Shape": "Simple"
+   }
+  },
+  {
+   "name": "probe.simple.Line1.Motor1.State",
+   "type": "String",
+   "uom": null,
+   "fields": {
+    "Equipment": "Motor1",
+    "Line": "Line1",
+    "Shape": "Simple"
+   }
+  },
+  {
+   "name": "probe.simple.Line1.Motor1.Temp",
+   "type": "Double",
+   "uom": null,
+   "fields": {
+    "Equipment": "Motor1",
+    "Line": "Line1",
+    "Shape": "Simple"
+   }
+  }
+ ],
+ "WitnessProbeSpb": [
+  {
+   "name": "ProbeGroup/Gateway1/Diagnostics/CPU",
+   "type": "Double",
+   "uom": "%",
+   "fields": {
+    "GroupID": "ProbeGroup",
+    "NodeID": "Gateway1"
+   }
+  },
+  {
+   "name": "ProbeGroup/Gateway1/Filler01/Batch/Steps",
+   "type": "String",
+   "uom": null,
+   "fields": {
+    "DeviceID": "Filler01",
+    "GroupID": "ProbeGroup",
+    "NodeID": "Gateway1"
+   }
+  },
+  {
+   "name": "ProbeGroup/Gateway1/Filler01/Count",
+   "type": "Int32",
+   "uom": null,
+   "fields": {
+    "DeviceID": "Filler01",
+    "GroupID": "ProbeGroup",
+    "NodeID": "Gateway1"
+   }
+  },
+  {
+   "name": "ProbeGroup/Gateway1/Filler01/LastCip",
+   "type": "String",
+   "uom": null,
+   "fields": {
+    "DeviceID": "Filler01",
+    "GroupID": "ProbeGroup",
+    "NodeID": "Gateway1"
+   }
+  },
+  {
+   "name": "ProbeGroup/Gateway1/Filler01/Line/Speed",
+   "type": "Double",
+   "uom": "bpm",
+   "fields": {
+    "DeviceID": "Filler01",
+    "GroupID": "ProbeGroup",
+    "NodeID": "Gateway1"
+   }
+  },
+  {
+   "name": "ProbeGroup/Gateway1/Filler01/Line/State",
+   "type": "String",
+   "uom": null,
+   "fields": {
+    "DeviceID": "Filler01",
+    "GroupID": "ProbeGroup",
+    "NodeID": "Gateway1"
+   }
+  },
+  {
+   "name": "ProbeGroup/Gateway1/Filler01/Motor1.Running",
+   "type": "Boolean",
+   "uom": null,
+   "fields": {
+    "DeviceID": "Filler01",
+    "GroupID": "ProbeGroup",
+    "NodeID": "Gateway1",
+    "TemplateInstance": "Motor1",
+    "TemplateMember": "Running",
+    "TemplateParam.Rated": "7.5kW",
+    "TemplateRef": "Motor",
+    "TemplateRootInstance": "Motor1",
+    "TemplateRootRef": "Motor",
+    "TemplateVersion": "1.0"
+   }
+  },
+  {
+   "name": "ProbeGroup/Gateway1/Filler01/Motor1.Speed",
+   "type": "Double",
+   "uom": "rpm",
+   "fields": {
+    "DeviceID": "Filler01",
+    "GroupID": "ProbeGroup",
+    "NodeID": "Gateway1",
+    "TemplateInstance": "Motor1",
+    "TemplateMember": "Speed",
+    "TemplateParam.Rated": "7.5kW",
+    "TemplateRef": "Motor",
+    "TemplateRootInstance": "Motor1",
+    "TemplateRootRef": "Motor",
+    "TemplateVersion": "1.0"
+   }
+  },
+  {
+   "name": "ProbeGroup/Gateway1/Filler01/Motor1.Status/Code",
+   "type": "Int32",
+   "uom": null,
+   "fields": {
+    "DeviceID": "Filler01",
+    "GroupID": "ProbeGroup",
+    "NodeID": "Gateway1",
+    "TemplateInstance": "Motor1",
+    "TemplateMember": "Status/Code",
+    "TemplateParam.Rated": "7.5kW",
+    "TemplateRef": "Motor",
+    "TemplateRootInstance": "Motor1",
+    "TemplateRootRef": "Motor",
+    "TemplateVersion": "1.0"
+   }
+  },
+  {
+   "name": "ProbeGroup/Gateway1/Filler01/Pump1.Flow",
+   "type": "Double",
+   "uom": "m3/h",
+   "fields": {
+    "DeviceID": "Filler01",
+    "GroupID": "ProbeGroup",
+    "NodeID": "Gateway1",
+    "TemplateInstance": "Pump1",
+    "TemplateMember": "Flow",
+    "TemplateParam.Service": "CIP supply",
+    "TemplateRef": "Pump",
+    "TemplateRootInstance": "Pump1",
+    "TemplateRootRef": "Pump",
+    "TemplateVersion": "2.1"
+   }
+  },
+  {
+   "name": "ProbeGroup/Gateway1/Filler01/Pump1.Motor.Running",
+   "type": "Boolean",
+   "uom": null,
+   "fields": {
+    "DeviceID": "Filler01",
+    "GroupID": "ProbeGroup",
+    "NodeID": "Gateway1",
+    "TemplateInstance": "Pump1.Motor",
+    "TemplateMember": "Running",
+    "TemplateParam.Rated": "5kW",
+    "TemplateRef": "Motor",
+    "TemplateRootInstance": "Pump1",
+    "TemplateRootRef": "Pump",
+    "TemplateVersion": "1.0"
+   }
+  },
+  {
+   "name": "ProbeGroup/Gateway1/Filler01/Pump1.Motor.Speed",
+   "type": "Double",
+   "uom": "rpm",
+   "fields": {
+    "DeviceID": "Filler01",
+    "GroupID": "ProbeGroup",
+    "NodeID": "Gateway1",
+    "TemplateInstance": "Pump1.Motor",
+    "TemplateMember": "Speed",
+    "TemplateParam.Rated": "5kW",
+    "TemplateRef": "Motor",
+    "TemplateRootInstance": "Pump1",
+    "TemplateRootRef": "Pump",
+    "TemplateVersion": "1.0"
+   }
+  },
+  {
+   "name": "ProbeGroup/Gateway1/Filler01/Pump1.Motor.Status/Code",
+   "type": "Int32",
+   "uom": null,
+   "fields": {
+    "DeviceID": "Filler01",
+    "GroupID": "ProbeGroup",
+    "NodeID": "Gateway1",
+    "TemplateInstance": "Pump1.Motor",
+    "TemplateMember": "Status/Code",
+    "TemplateParam.Rated": "5kW",
+    "TemplateRef": "Motor",
+    "TemplateRootInstance": "Pump1",
+    "TemplateRootRef": "Pump",
+    "TemplateVersion": "1.0"
+   }
+  },
+  {
+   "name": "ProbeGroup/Gateway1/Filler01/Temperature",
+   "type": "Double",
+   "uom": "degC",
+   "fields": {
+    "DeviceID": "Filler01",
+    "GroupID": "ProbeGroup",
+    "NodeID": "Gateway1"
+   }
+  },
+  {
+   "name": "ProbeGroup/Gateway1/Filler01/Valves/Open",
+   "type": "String",
+   "uom": null,
+   "fields": {
+    "DeviceID": "Filler01",
+    "GroupID": "ProbeGroup",
+    "NodeID": "Gateway1"
+   }
+  },
+  {
+   "name": "ProbeGroup/Gateway1/Node Control/Rebirth",
+   "type": "Boolean",
+   "uom": null,
+   "fields": {
+    "GroupID": "ProbeGroup",
+    "NodeID": "Gateway1"
+   }
+  },
+  {
+   "name": "ProbeGroup/Gateway1/Uptime",
+   "type": "Int64",
+   "uom": null,
+   "fields": {
+    "GroupID": "ProbeGroup",
+    "NodeID": "Gateway1"
+   }
+  },
+  {
+   "name": "ProbeGroup/Gateway1/bdSeq",
+   "type": "Int64",
+   "uom": null,
+   "fields": {
+    "GroupID": "ProbeGroup",
+    "NodeID": "Gateway1"
+   }
+  },
+  {
+   "name": "ProbeGroup/NCMD/Gateway1/Node Control/Rebirth",
+   "type": "Boolean",
+   "uom": null,
+   "fields": {
+    "Command": "NCMD",
+    "GroupID": "ProbeGroup",
+    "NodeID": "Gateway1"
+   }
+  }
+ ]
+}

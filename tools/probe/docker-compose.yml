@@ -1,0 +1,21 @@
+# Witness probe harness: a throwaway anonymous broker plus the fixture publisher, on the Timebase
+# Docker network so a test Collector instance can reach witness-probe-broker:1883.
+name: witness-probe
+services:
+  witness-probe-broker:
+    image: eclipse-mosquitto:2.1.4
+    container_name: witness-probe-broker
+    volumes: ["./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro"]
+    networks: [timebase]
+    restart: "no"
+  witness-probe-pub:
+    image: witness-gateway:current        # has paho-mqtt (via aiomqtt)
+    container_name: witness-probe-pub
+    entrypoint: ["python", "/probe/probe_pub.py"]
+    environment: {PROBE_HOST: witness-probe-broker, DURATION: "3600"}
+    volumes: ["./:/probe"]
+    depends_on: [witness-probe-broker]
+    networks: [timebase]
+    restart: "no"
+networks:
+  timebase: {external: true, name: timebase-2-0-beta_default}
