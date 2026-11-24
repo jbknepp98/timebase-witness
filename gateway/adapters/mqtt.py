@@ -36,16 +36,25 @@ def _scalar(text, typ):
     return t.lower() == "true" if typ == "Boolean" else t
 
 
-def build(conn):
-    inp = conn.profile_inputs()
-    st = conn.status()
-    ex = inp["exclude"]
+def planning_inputs(conn, inp=None):
+    """What Handoffs may plan on a broker: topic shapes without "Not for Handoffs" and metadata topics,
+    their latest messages, the Sparkplug B births, and what was left out."""
+    inp = inp or conn.profile_inputs()
     shapes = dict(inp["shapes"])
-    excluded = sorted(t for t in shapes if ps.any_match(ex["filters"], t))
+    excluded = sorted(t for t in shapes if ps.any_match(inp["exclude"]["filters"], t))
     kept = {t: sh for t, sh in shapes.items() if t not in set(excluded)}
     cache = {t: e for t, e in inp["cache"].items() if t in kept}
     meta = hints.from_metadata_topics(cache, kept)
     kept = {t: sh for t, sh in kept.items() if t not in meta["metadataTopics"]}
+    return {"inp": inp, "all": shapes, "shapes": kept, "cache": cache, "excluded": excluded, "meta": meta,
+            "metadata": sorted(meta["metadataTopics"]), "births": inp["spb"].births()}
+
+
+def build(conn):
+    pi = planning_inputs(conn)
+    inp, shapes, kept, cache, excluded, meta = pi["inp"], pi["all"], pi["shapes"], pi["cache"], pi["excluded"], pi["meta"]
+    st = conn.status()
+    ex = inp["exclude"]
     spbh = hints.from_sparkplug(inp["spb"].births())
     signal_hints = hints.merge_signals(spbh["signals"], meta["signals"], hints.from_json_values(kept, cache))
     types = meta["types"] + spbh["types"]

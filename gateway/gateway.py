@@ -32,6 +32,7 @@ from aiohttp import web, WSMsgType
 
 import adapters
 import atlas_mapper
+import collector_plan
 import bridge_lookup
 import hints
 import payload_shapes
@@ -447,6 +448,22 @@ async def agent_profile(request):
     return web.json_response(model.inspect(path) if path else model.profile(), dumps=lambda o: json.dumps(o, default=str))
 
 
+async def agent_validate(request):
+    """Read-only: check a Collector plan (v1 or v2) against a connection and predict every tag it would write."""
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        return web.json_response({"error": "Send JSON: {server, plan}."}, status=400)
+    conn = MANAGER.conns.get(str(body.get("server") or ""))
+    if not conn:
+        return web.json_response({"error": "Unknown connection."}, status=404)
+    r = collector_plan.validate(conn, body.get("plan") or {})
+    tags = [{"tag": t, **{k: v for k, v in i.items() if k in ("instanceName", "subscription", "dataType", "uom", "fields", "optional")}}
+            for t, i in sorted(r["owner"].items())]
+    return web.json_response({"report": r["report"], "instances": r["instances"], "tags": tags},
+                             dumps=lambda o: json.dumps(o, default=str))
+
+
 async def agent_info(_request):
     return web.json_response({"model": atlas_mapper.MODEL, "effort": atlas_mapper.EFFORT,
                               "keyConfigured": bool(os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"))})
@@ -484,6 +501,7 @@ def main():
     app.router.add_get("/api/agent/latest", agent_latest)
     app.router.add_get("/api/agent/info", agent_info)
     app.router.add_get("/api/agent/profile", agent_profile)
+    app.router.add_post("/api/agent/validate", agent_validate)
     app.router.add_get("/briefs/", briefs_list)
     app.router.add_get("/briefs/{name}", briefs_file)
     app.router.add_get("/healthz", lambda r: web.Response(text="ok"))

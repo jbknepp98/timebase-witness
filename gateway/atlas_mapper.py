@@ -181,6 +181,8 @@ TOOLS = [
 
 from source_model import UNIT_RE, clean_description, security_text, units_of  # noqa: E402,F401  (shared helpers)
 import adapters  # noqa: E402
+from collector_plan import (COLLECTOR_POLICY, HISTORIAN_HOST, HISTORIAN_PORT, HISTORIAN_TLS, NAME_RE,  # noqa: E402,F401
+                            collector_instance, connect_plan, tag_fields, topic_matches, validate_collector)
 
 
 def tag_name(info):
@@ -209,120 +211,6 @@ class NamespaceView:
 
 
 # ---------------------------------------------------------------------- Collector handoff
-# Witness's policy names -> Timebase Collector OPC UA plugin names
-COLLECTOR_POLICY = {"None": "None", "Basic256Sha256": "Basic256Sha256",
-                    "Aes128Sha256RsaOaep": "Aes128_Sha256_RsaOaep", "Aes256Sha256RsaPss": "Aes256_Sha256_RsaPss"}
-NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,63}$")
-
-
-def topic_matches(pattern, path):
-    """Collector OPC UA topic match: dot-delimited, case-sensitive, + one level, # the rest (last only)."""
-    pat, segs = pattern.split("."), path.split(".")
-    for i, p in enumerate(pat):
-        if p == "#":
-            return i < len(segs)
-        if i >= len(segs) or (p != "+" and p != segs[i]):
-            return False
-    return len(pat) == len(segs)
-
-
-def validate_collector(server, plan):
-    """Check the model's plan against the namespace. Returns (report, problems)."""
-    variables = sorted(n["path"].replace("/", ".") for n in server.nodes.values() if n["nodeClass"] == "Variable")
-    problems, subs = [], []
-    if not NAME_RE.match(plan.get("name") or ""):
-        problems.append("name must be PascalCase letters and digits, starting with a letter")
-    if not NAME_RE.match(plan.get("dataset") or ""):
-        problems.append("dataset must be PascalCase letters and digits, starting with a letter")
-    if not plan.get("subscriptions"):
-        problems.append("at least one subscription is needed")
-    logged = set()
-    owner = {}
-    for i, sub in enumerate(plan.get("subscriptions") or []):
-        topics = [t.strip() for t in sub.get("topics") or [] if t.strip()]
-        rep = {"subscription": i + 1, "topics": {}}
-        if not topics:
-            problems.append(f"subscription {i + 1} has no topics")
-        for t in topics:
-            if "/" in t:
-                problems.append(f"topic '{t}' uses '/'; Collector topics are dot-joined")
-            if "#" in t[:-1] or ("#" in t and not t.endswith(".#") and t != "#"):
-                problems.append(f"topic '{t}': '#' may only be the last segment")
-            n = sum(1 for v in variables if topic_matches(t, v))
-            rep["topics"][t] = n
-            if n == 0:
-                problems.append(f"topic '{t}' matches no variable in the namespace")
-        matched = [v for v in variables if any(topic_matches(t, v) for t in topics)]
-        rx = sub.get("excludeRegex") or ""
-        excluded = []
-        if rx:
-            try:
-                r = re.compile(rx)
-                excluded = [v for v in matched if r.search(v)]
-            except re.error as e:
-                problems.append(f"subscription {i + 1} excludeRegex does not compile: {e}")
-        kept = [v for v in matched if v not in excluded]
-        logged.update(kept)
-        for v in kept:
-            owner.setdefault(v, i)
-        td = sub.get("topicDefinition") or ""
-        keys = [k for k in td.split(".") if k]
-        if not keys:
-            problems.append(f"subscription {i + 1} needs a topicDefinition")
-        for f in sub.get("fields") or []:
-            for key in re.findall(r"\[Topic:([^\]]+)\]", f.get("value") or ""):
-                if key not in keys:
-                    problems.append(f"field {f.get('name')} uses [Topic:{key}] but topicDefinition has no '{key}' segment")
-        depths = sorted({len(v.split(".")) for v in kept})
-        if keys and depths and len(keys) > max(depths):
-            problems.append(f"topicDefinition has {len(keys)} segments but the longest logged path has {max(depths)}")
-        if sub.get("intervalMs") is not None and not (50 <= int(sub["intervalMs"]) <= 3_600_000):
-            problems.append(f"subscription {i + 1} intervalMs should be between 50 and 3600000")
-        rep.update({"matched": len(matched), "excluded": len(excluded), "logged": len(kept),
-                    "pathDepths": depths, "sampleExcluded": excluded[:12], "sampleLogged": kept[:8]})
-        subs.append(rep)
-    report = {"ok": not problems, "problems": problems, "variablesInNamespace": len(variables),
-              "variablesLogged": len(logged), "notLogged": [v for v in variables if v not in logged][:25], "subscriptions": subs}
-    report["_owner"] = owner      # tag -> subscription index; run_tool strips it before the model sees the report
-    return report, problems
-
-
-def collector_instance(server, plan, report):
-    """The Collector instance as a settings document: connection from Witness, the rest from the plan."""
-    st = server.status()
-    s = server.rec["settings"]
-    policy = s.get("securityPolicy") or "None"
-    settings = {"Url": s["endpoint"]}
-    if s.get("auth") == "username" and s.get("username"):
-        settings["Username"] = s["username"]
-    settings["SecurityPolicy"] = COLLECTOR_POLICY.get(policy, policy)
-    settings["SecurityMode"] = s.get("securityMode") if policy != "None" else "None"
-    if policy != "None":
-        # Witness pins the server certificate when the user asked it to; Collector has no pin, so
-        # keep the same stance: trust it explicitly instead of auto-accepting.
-        settings["AutoAcceptUntrusted"] = not bool(s.get("serverCertThumbprint"))
-    subs = []
-    for sub in plan["subscriptions"]:
-        out = {"Interval": int(sub.get("intervalMs") or 1000),
-               "Topics": [t.strip() for t in sub["topics"] if t.strip()],
-               "TopicDefinition": sub["topicDefinition"]}
-        if sub.get("excludeRegex"):
-            out["Filter"] = sub["excludeRegex"]
-        out["Fields"] = {f["name"]: f["value"] for f in sub.get("fields") or [] if f.get("name")}
-        subs.append(out)
-    settings["Subscriptions"] = subs
-    return {
-        "name": plan["name"], "type": "OPCUA",
-        "description": f"{st['name']} ({s['endpoint']}) - planned by Witness",
-        "historian": {"dataset": plan["dataset"]},
-        "Settings": settings,
-        "needsPassword": s.get("auth") == "username",
-        "trustServerCertificate": s.get("serverCertThumbprint") or None,
-        "variablesLogged": report["variablesLogged"],
-        "notes": plan.get("notes") or [],
-    }
-
-
 def collector_brief(server, inst, settings_url):
     st = server.status()
     settings_json = json.dumps({"Settings": inst["Settings"]}, indent=2)
@@ -365,64 +253,6 @@ def collector_brief(server, inst, settings_url):
 
 
 # ---------------------------------------------------------------------- Connect handoff
-HISTORIAN_HOST = os.environ.get("CONNECT_HISTORIAN_HOST", "historian")
-HISTORIAN_PORT = int(os.environ.get("CONNECT_HISTORIAN_PORT", "4512"))
-HISTORIAN_TLS = os.environ.get("CONNECT_HISTORIAN_TLS", "true").lower() not in ("0", "false", "no")
-
-
-def tag_fields(tag, sub):
-    """The metadata fields Collector writes on a tag, from the subscription's topic definition and fields."""
-    keys = [k for k in (sub.get("TopicDefinition") or "").split(".") if k]
-    segs = tag.split(".")
-    seg = {k: segs[i] for i, k in enumerate(keys) if i < len(segs)}
-    return {name: re.sub(r"\[Topic:([^\]]+)\]", lambda m: seg.get(m.group(1), m.group(0)), str(val))
-            for name, val in (sub.get("Fields") or {}).items()}
-
-
-def connect_plan(server, inst, owner):
-    """The Connect handoff: a Historian connector for the Collector's dataset, and what that dataset holds."""
-    dataset = inst["historian"]["dataset"]
-    subs = inst["Settings"]["Subscriptions"]
-    by_tag = {n["path"].replace("/", "."): n for n in server.nodes.values() if n["nodeClass"] == "Variable"}
-    tags = []
-    for tag in sorted(owner):
-        n = by_tag.get(tag) or {}
-        tags.append({"name": tag, "dataType": n.get("dataType") or "?", "units": units_of(n) if n else None,
-                     "fields": tag_fields(tag, subs[owner[tag]]), "parent": tag.rsplit(".", 1)[0], "signal": tag.rsplit(".", 1)[-1]})
-    types, units = defaultdict(int), defaultdict(int)
-    for t in tags:
-        types[t["dataType"]] += 1
-        if t["units"]:
-            units[t["units"]] += 1
-    # fields per subscription: each has its own topic definition, so its tags carry their own field set
-    fields = []
-    for i, sub in enumerate(subs):
-        mine = [t for t in tags if owner[t["name"]] == i]
-        values = defaultdict(set)
-        for t in mine:
-            for k, v in t["fields"].items():
-                values[k].add(v)
-        fields.append({"topics": sub["Topics"], "topicDefinition": sub.get("TopicDefinition") or "", "tags": len(mine),
-                       "fields": [{"name": k, "distinct": len(v), "examples": sorted(v)[:6]} for k, v in values.items()]})
-    # one sample object per signal pattern (objects that log the same set of signals)
-    groups = defaultdict(list)
-    for t in tags:
-        groups[t["parent"]].append(t)
-    patterns = defaultdict(list)
-    for parent, ts in groups.items():
-        patterns[tuple(sorted(x["signal"] for x in ts))].append(parent)
-    samples = []
-    for sig, parents in sorted(patterns.items(), key=lambda kv: -len(kv[1]))[:8]:
-        first = sorted(parents)[0]
-        samples.append({"objects": len(parents), "example": first, "tags": sorted(groups[first], key=lambda x: x["name"])[:12]})
-    settings = {"Host": HISTORIAN_HOST, "Port": HISTORIAN_PORT, "UseTls": HISTORIAN_TLS,
-                "ClientName": f"Timebase.Connect.{dataset}", "Auth": {"Mode": "Host"},
-                "Datasets": {dataset: {"Dataset": dataset}}, "DefaultLookback": "01:00:00"}
-    return {"name": f"Historian {dataset}", "type": "Timebase.Historian", "dataset": dataset, "collector": inst["name"],
-            "Settings": settings, "tagCount": len(tags), "dataTypes": dict(types), "units": dict(units),
-            "fields": fields, "samples": samples, "maxDepth": max((t["name"].count(".") + 1 for t in tags), default=0)}
-
-
 def connect_brief(server, plan, settings_url):
     st = server.status()
     ds = plan["dataset"]
