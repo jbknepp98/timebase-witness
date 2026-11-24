@@ -25,6 +25,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import aiomqtt
+import sparkplug
 from asyncua import Client, ua
 from asyncua.crypto import cert_gen, security_policies as sp
 from cryptography import x509
@@ -636,13 +637,26 @@ def mqtt_filters(s):
     return topics
 
 
-def mqtt_entry(message):
+def mqtt_entry(message, spb=None):
+    """One message for the browser. Sparkplug B payloads are decoded to JSON (names and datatypes
+    resolved against the Edge Node's births in `spb`); a payload that fails to decode stays base64."""
     raw = bytes(message.payload) if message.payload is not None else b""
+    topic = message.topic.value
+    e = {"t": topic, "r": bool(message.retain), "q": int(message.qos), "ts": int(time.time() * 1000)}
+    info = sparkplug.parse_topic(topic)
+    if info and info["type"] != "STATE" and spb is not None:
+        try:
+            decoded = spb.apply(info, sparkplug.parse(raw))
+            e.update({"p": json.dumps(decoded, separators=(",", ":"), default=str), "b": False,
+                      "spb": {k: info[k] for k in ("type", "group", "node", "device")}})
+            return e
+        except Exception as exc:  # noqa: BLE001  (a malformed payload must never stop the connection)
+            e["spbError"] = f"{type(exc).__name__}: {exc}"
     try:
-        text, binary = raw.decode("utf-8"), False
+        e["p"], e["b"] = raw.decode("utf-8"), False
     except UnicodeDecodeError:
-        text, binary = base64.b64encode(raw).decode(), True
-    return {"t": message.topic.value, "p": text, "b": binary, "r": bool(message.retain), "q": int(message.qos), "ts": int(time.time() * 1000)}
+        e["p"], e["b"] = base64.b64encode(raw).decode(), True
+    return e
 
 
 def mqtt_url(s):
@@ -661,6 +675,7 @@ class MqttConn:
         self.error = None
         self.cache = {}
         self.pending = []
+        self.spb = sparkplug.NodeSessions()   # Sparkplug B births, aliases and template definitions per Edge Node
         self.updates = 0
         self.connected_at = None
         self.tasks = []
@@ -688,11 +703,12 @@ class MqttConn:
                     for t in mqtt_filters(self.rec["settings"]):
                         await client.subscribe(t, qos=0)
                     self.connected_at = time.time()
+                    self.spb = sparkplug.NodeSessions()   # a new connection starts every Sparkplug session afresh
                     self.set_state("connected")
                     backoff = 2
                     log.info("[%s] connected to %s", self.id, mqtt_url(self.rec["settings"]))
                     async for message in client.messages:
-                        e = mqtt_entry(message)
+                        e = mqtt_entry(message, self.spb)
                         if e["p"] == "" and e["r"]:
                             self.cache.pop(e["t"], None)
                         elif e["t"] in self.cache or len(self.cache) < MQTT_CACHE_MAX:

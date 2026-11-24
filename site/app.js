@@ -410,6 +410,7 @@
     const text = e.b ? `(binary payload, ${Math.floor((e.p.length * 3) / 4)} bytes, base64) ${e.p}` : e.p;
     if (text !== '') markPayload(c, n);
     n.raw = text; n.retained = !!e.r; n.qos = e.q; n.count++; n.last = now;
+    n.spb = e.spb || null; n.spbError = e.spbError || null;   // Sparkplug B: the gateway sends it decoded
     let json;
     const tt = text.trim();
     if (tt && (tt[0] === '{' || tt[0] === '[')) { try { json = JSON.parse(tt); } catch { json = undefined; } }
@@ -824,7 +825,9 @@
       n.retained ? '<span class="tag info">Retained</span>' : '',
       stateNode ? '<span class="tag info">Retained state</span>' : '',
       own ? `<span class="tag">QoS ${n.qos}</span>` : '',
-      own ? `<span class="tag">${n.json !== undefined ? 'JSON' : 'Text'}</span>` : '',
+      own && n.spb ? `<span class="tag info" title="Sparkplug B protobuf, decoded by the gateway">Sparkplug B · ${esc(n.spb.type)}</span>` : '',
+      own && n.spbError ? `<span class="tag" title="${esc(n.spbError)}">Sparkplug B (not decodable)</span>` : '',
+      own && !n.spb ? `<span class="tag">${n.json !== undefined ? 'JSON' : 'Text'}</span>` : '',
       env.instanceUri ? `<span class="tag">Atlas instance ${esc(env.instanceUri)}</span>` : '',
     ].join('');
     const ident = ua ? ua.id : localPath(n);
