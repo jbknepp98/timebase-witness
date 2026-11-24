@@ -301,7 +301,7 @@
     pendingLegacy: null,         // old #/ns/... or #/ua/... link, resolved once connections arrive
     connsLoaded: false,
     openConn: new Set(), connFilter: '', uaSocket: 'connecting',
-    agent: { server: null, domain: '', running: false, items: [], brief: '', draft: '', error: null, info: null, usage: null, dirty: true, es: null, artifact: null, versions: [], collector: '', handoff: 'atlas' },
+    agent: { server: null, domain: '', running: false, items: [], brief: '', draft: '', error: null, info: null, usage: null, dirty: true, es: null, artifact: null, versions: [], collector: '', handoff: 'atlas', page: null, startedAt: 0, elapsed: 0, turns: 0 },
   };
   let apiBase = '';
   const BROKERS = [];          // MQTT connections from config.json
@@ -1436,13 +1436,13 @@ Then follow the instructions at the top of the brief: run the model-domain skill
     else if (ev.type === 'tool') items.push({ kind: 'tool', name: ev.name, input: ev.input, result: null });
     else if (ev.type === 'tool_result') { const t = [...items].reverse().find((x) => x.kind === 'tool' && x.name === ev.name && x.result === null); if (t) { t.result = ev.summary; t.error = ev.error; } }
     else if (ev.type === 'text') { A.draft += ev.delta; if (!lastIt || lastIt.kind !== 'writing') items.push({ kind: 'writing' }); }
-    else if (ev.type === 'done') { A.brief = ev.brief; A.artifact = ev.artifact || null; A.draft = ''; A.usage = ev.usage; A.running = false; if (ev.artifact) { items.push({ kind: 'saved', text: `Saved Atlas handoff ${ev.artifact.file}${ev.artifact.collector ? ` and Collector handoff ${ev.artifact.collector.file}` : ''}` }); setTimeout(() => loadLatestBrief(ev.artifact.file), 50); } items.push({ kind: 'done', text: `Handoffs ready after ${ev.turns} model turns · ${fmtNum((ev.usage.input || 0) + (ev.usage.cacheWrite || 0) + (ev.usage.cacheRead || 0))} input / ${fmtNum(ev.usage.output)} output tokens${ev.usage.cacheRead ? ` · ${fmtNum(ev.usage.cacheRead)} read from cache` : ''}` }); }
+    else if (ev.type === 'done') { A.brief = ev.brief; A.artifact = ev.artifact || null; A.draft = ''; A.usage = ev.usage; A.running = false; A.page = 'handoffs'; A.turns = ev.turns; A.elapsed = A.startedAt ? Date.now() - A.startedAt : 0; if (ev.artifact) { items.push({ kind: 'saved', text: `Saved Atlas handoff ${ev.artifact.file}${ev.artifact.collector ? ` and Collector handoff ${ev.artifact.collector.file}` : ''}` }); setTimeout(() => loadLatestBrief(ev.artifact.file), 50); } items.push({ kind: 'done', text: `Handoffs ready after ${ev.turns} model turns · ${fmtNum((ev.usage.input || 0) + (ev.usage.cacheWrite || 0) + (ev.usage.cacheRead || 0))} input / ${fmtNum(ev.usage.output)} output tokens${ev.usage.cacheRead ? ` · ${fmtNum(ev.usage.cacheRead)} read from cache` : ''}` }); }
     else if (ev.type === 'error') { A.error = ev.message; A.running = false; items.push({ kind: 'error', text: ev.message }); }
     A.dirty = true;
   }
   function selectAgentServer(id) {
     if (S.agent.running) return;
-    S.agent.server = id; S.agent.domain = ''; S.agent.brief = ''; S.agent.collector = ''; S.agent.connect = ''; S.agent.artifact = null; S.agent.items = []; S.agent.error = null; S.agent.dirty = true;
+    S.agent.server = id; S.agent.page = null; S.agent.domain = ''; S.agent.brief = ''; S.agent.collector = ''; S.agent.connect = ''; S.agent.artifact = null; S.agent.items = []; S.agent.error = null; S.agent.dirty = true;
     buildPage(); loadLatestBrief();
   }
 
@@ -1451,6 +1451,7 @@ Then follow the instructions at the top of the brief: run the model-domain skill
     if (A.running || !A.server) return;
     const dom = ($('#agentDomain') && $('#agentDomain').value.trim()) || A.domain;
     A.items = []; A.brief = ''; A.collector = ''; A.connect = ''; A.handoff = 'atlas'; A.draft = ''; A.error = null; A.usage = null; A.artifact = null; A.running = true; A.dirty = true;
+    A.page = 'activity'; A.startedAt = Date.now(); A.elapsed = 0; A.turns = 0;
     renderAtlas();
     try {
       const res = await fetch(`${apiBase}/api/agent/runs`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ server: A.server, domain: dom }) });
@@ -1481,9 +1482,10 @@ Then follow the instructions at the top of the brief: run the model-domain skill
         <span class="spacer"></span>
         <button class="btn btn-primary" data-act="agentrun" id="agentRun">${icon('sparkles', 'ic-sm')}Plan the move</button>
       </div>
-      <div class="agent-split">
-        <div class="panel agent-log"><div class="agent-h"><span class="lbl">Agent activity</span><span class="note" id="agentState"></span></div><div id="agentLog"></div></div>
-        <div class="panel agent-brief"><div class="ho-bar">
+      <div class="panel agent-pages">
+        <div class="pg-h"><span class="pg-spin" id="agentSpin" hidden></span><span class="lbl" id="agentPageTitle">Agent activity</span><span class="note" id="agentState"></span><div class="pager" id="agentPager"></div></div>
+        <div class="ag-page" id="agentPageAct"><div id="agentLog"></div></div>
+        <div class="ag-page" id="agentPageHo" hidden><div class="ho-bar">
             <div class="handoffs" id="agentHandoffs"></div>
             <div class="ho-ver"><span class="lbl">Version</span><select id="agentVersion" class="ver-select" title="Saved versions"></select></div></div>
           <div class="md" id="agentBrief"></div></div>
@@ -1495,14 +1497,39 @@ Then follow the instructions at the top of the brief: run the model-domain skill
     if (!A.info) loadAgentInfo();
     if (!A.brief && !A.running) loadLatestBrief();
   }
+  function agentNote(page) {
+    const A = S.agent; const st = $('#agentState'); if (!st) return;
+    const secs = (ms) => (ms >= 60000 ? `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s` : `${Math.round(ms / 1000)}s`);
+    const tools = A.items.filter((it) => it.kind === 'tool').length;
+    let t = '';
+    if (A.running) t = `Running · ${tools} tool call${tools === 1 ? '' : 's'} · ${secs(Date.now() - A.startedAt)}`;
+    else if (page === 'handoffs' && A.artifact) t = `${A.artifact.domain} v${A.artifact.version}${A.turns && A.elapsed ? ` · planned in ${secs(A.elapsed)} · ${A.turns} turns` : ` · ${ago(Date.parse(A.artifact.createdAt))}`}`;
+    else t = A.error ? 'Stopped' : A.brief ? 'Done' : '';
+    if (st.textContent !== t) st.textContent = t;
+  }
   function renderAtlas() {
     const A = S.agent;
     const log = $('#agentLog'); const brief = $('#agentBrief'); if (!log || !brief) return;
     const srcSel = $('#agentSrc'); if (srcSel) srcSel.disabled = A.running;
     const runBtn = $('#agentRun');
     if (runBtn) { runBtn.disabled = A.running || !A.server; runBtn.innerHTML = A.running ? `${icon('sparkles', 'ic-sm')}Planning…` : `${icon('sparkles', 'ic-sm')}${A.brief ? 'Plan again' : 'Plan the move'}`; }
-    const st = $('#agentState'); if (st) st.textContent = A.running ? 'Running' : A.error ? 'Stopped' : A.brief ? 'Done' : '';
     const art = A.artifact;
+    // one full-width panel, two pages: the run's activity, and the handoffs once there are any
+    const hasHo = !!(art && !A.running);
+    const page = A.running || !hasHo ? 'activity' : (A.page || 'handoffs');
+    const onAct = page === 'activity';
+    $('#agentPageAct').hidden = !onAct; $('#agentPageHo').hidden = onAct;
+    $('#agentSpin').hidden = !A.running;
+    $('#agentPageTitle').textContent = onAct ? 'Agent activity' : 'Handoffs';
+    agentNote(page);
+    const pager = $('#agentPager');
+    const chev = (dir, to, enabled, title) => `<button class="icon-btn" data-act="agentpage" data-p="${to}"${enabled ? '' : ' disabled'} title="${esc(title)}" aria-label="${esc(title)}">${icon(dir, 'ic-sm')}</button>`;
+    const dots = `<span class="pg-dots" aria-hidden="true"><i${onAct ? ' class="on"' : ''}></i><i${onAct ? '' : ' class="on"'}></i></span>`;
+    const nextTitle = A.running ? 'The handoffs appear when the run finishes' : hasHo ? 'Handoffs' : 'No handoffs yet';
+    const ph = onAct
+      ? `${dots}${chev('chevronLeft', 'activity', false, 'Previous')}<span class="pg-n">1 / 2</span>${chev('chevronRight', 'handoffs', hasHo, nextTitle)}<span class="pg-name">${A.running ? 'Handoffs when done' : 'Handoffs'}</span>`
+      : `<span class="pg-name">Agent activity</span>${chev('chevronLeft', 'activity', true, 'Agent activity')}<span class="pg-n">2 / 2</span>${chev('chevronRight', 'handoffs', false, 'Next')}${dots}`;
+    if (pager.dataset.sig !== ph) { pager.innerHTML = ph; pager.dataset.sig = ph; }
     const vs = $('#agentVersion');
     if (vs) {
       const opts = A.versions.map((e) => `<option value="${esc(e.file)}"${art && art.file === e.file ? ' selected' : ''}>${esc(e.domain)} v${e.version} · ${esc(new Date(Date.parse(e.createdAt)).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }))}</option>`).join('');
@@ -1617,7 +1644,7 @@ Then follow the instructions at the top of the brief: run the model-domain skill
       const k = connOf(S.view); const dot = $('#connDot');
       if (k && dot) dot.className = `dot ${dotFor(k.kind === 'ua' ? uaState(k.s) : k.b.conn)}`;
     } else if (S.view === 'atlas') {
-      if (S.agent.dirty) { renderAtlas(); S.agent.dirty = false; }
+      if (S.agent.dirty) { renderAtlas(); S.agent.dirty = false; } else if (S.agent.running) agentNote('activity');
     }
     const hs = $('#hdrStats'); if (hs) hs.innerHTML = statsHtml();
     const tc = $('#titleCount');
@@ -1763,6 +1790,8 @@ Then follow the instructions at the top of the brief: run the model-domain skill
       const k = el.dataset.key;
       if (S.openConn.has(k)) S.openConn.delete(k); else S.openConn.add(k);
       renderConnections();
+    } else if (act === 'agentpage') {
+      if (!el.disabled && S.agent.page !== el.dataset.p) { S.agent.page = el.dataset.p; S.agent.dirty = true; renderAtlas(); }
     } else if (act === 'agentho') {
       if (e.target.closest('a, button')) return;
       if (S.agent.handoff !== el.dataset.h) { S.agent.handoff = el.dataset.h; S.agent.dirty = true; renderAtlas(); }

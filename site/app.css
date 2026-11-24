@@ -345,10 +345,23 @@ pre.json { margin: 0; background: var(--card); border: 1px solid var(--border); 
 }
 
 /* Map to Atlas */
-.agent-split { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(300px, 420px) 1fr; gap: 20px; }
-.agent-log, .agent-brief { display: flex; flex-direction: column; }
-.agent-h { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--card); z-index: 1; }
-.agent-h .note { margin-left: auto; font-size: 12px; color: var(--muted-fg); }
+/* one full-width panel with two pages (activity, handoffs) and a pager in its header */
+.agent-pages { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.pg-h { display: flex; align-items: center; gap: 10px; padding: 8px 10px 8px 16px; border-bottom: 1px solid var(--border); flex: none; }
+.pg-h .note { font-size: 12px; color: var(--muted-fg); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pg-spin { width: 8px; height: 8px; border-radius: 50%; background: var(--tb-blue-500); flex: none; animation: pg-pulse 1.4s ease-in-out infinite; }
+.pg-spin[hidden] { display: none; }
+@keyframes pg-pulse { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--tb-blue-500) 45%, transparent); } 50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--tb-blue-500) 0%, transparent); } }
+.pager { margin-left: auto; display: flex; align-items: center; gap: 2px; flex: none; }
+.pager .pg-n { font: 400 12px "JetBrains Mono", monospace; color: var(--muted-fg); padding: 0 6px; }
+.pager .pg-name { font-size: 12px; color: var(--muted-fg); margin: 0 6px; }
+.pager .icon-btn:disabled { opacity: .35; cursor: not-allowed; background: transparent; }
+.pg-dots { display: flex; gap: 6px; margin: 0 8px; }
+.pg-dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--border); }
+.pg-dots i.on { background: var(--tb-blue-500); }
+.ag-page { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.ag-page[hidden] { display: none; }
+@media (max-width: 700px) { .pager .pg-name, .pg-dots { display: none; } .pg-h { flex-wrap: wrap; } }
 #agentLog { padding: 8px 0; overflow: auto; flex: 1; }
 .ag-row { display: grid; grid-template-columns: 16px 1fr; gap: 10px; padding: 7px 16px; font-size: 13px; line-height: 1.5; }
 .ag-row .ic-sm { margin-top: 3px; color: var(--muted-fg); }
@@ -376,7 +389,6 @@ pre.json { margin: 0; background: var(--card); border: 1px solid var(--border); 
 .md th { text-align: left; font: 600 10px/15px Poppins, sans-serif; letter-spacing: 1px; text-transform: uppercase; color: var(--muted-fg); padding: 8px 10px; border-bottom: 1px solid var(--border); background: var(--input-surface); }
 .md td { padding: 7px 10px; border-bottom: 1px solid var(--grid-line); vertical-align: top; }
 .md tr:last-child td { border-bottom: 0; }
-@media (max-width: 1000px) { .agent-split { grid-template-columns: 1fr; grid-template-rows: 40% 1fr; } }
 .ver-select { margin-left: 8px; height: 28px; border-radius: 8px; border: 1px solid var(--border); background: var(--input-surface); color: var(--fg); font: 400 12px Poppins, sans-serif; padding: 0 8px; max-width: 260px; }
 .ver-select:disabled { opacity: .5; }
 a.btn { text-decoration: none; }
