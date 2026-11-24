@@ -253,7 +253,9 @@ def mqtt_subscription(sub, shapes):
         q = sub.get("qualityField") or d.get("qualityField")
         if q:
             out["QualityField"] = q
-        u = sub.get("uomFields") or ([d["uomField"]] if d.get("uomField") else [])
+        # units are optional per message, so take the unit field from any matched topic that has one
+        uf = next((sh["detail"].get("uomField") for sh in matched if sh["shape"] == shape and sh["detail"].get("uomField")), None)
+        u = sub.get("uomFields") or ([uf] if uf else [])
         if u:
             out["UOMFields"] = list(u)
     if sub.get("ignoreParts"):

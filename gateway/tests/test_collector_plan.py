@@ -54,6 +54,8 @@ class BrokerPlanTests(unittest.TestCase):
                           "TimestampFields": ["timestamp"], "TimestampType": "String", "TagnameDelimiter": ".", "TagnameIncludesTopic": True})
         self.assertIn("probe.structured.DemoPlant.Utilities.Boiler.SteamPressureBar", r["owner"])
         self.assertEqual(r["owner"]["probe.structured.DemoPlant.Utilities.Boiler.SteamPressureBar"]["uom"], "bar")
+        state_first = cp.validate(Broker(), plan({"plugin": "MQTT", "name": "M", "subscriptions": [{"topics": ["probe/structured/DemoPlant/Utilities/Boiler/State", "probe/structured/#"]}]}))
+        self.assertEqual(state_first["instances"][0]["Settings"]["Subscriptions"][0]["UOMFields"], ["units"])
         arr = cp.validate(Broker(), plan({"plugin": "MQTT", "name": "M", "subscriptions": [{"topics": ["probe/structuredarray/#"]}]}))
         self.assertEqual(sorted(arr["owner"]), ["Tag 1", "Tag 2", "Tag 3"])
         self.assertTrue(r["report"]["ok"])
