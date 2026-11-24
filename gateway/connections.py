@@ -422,6 +422,7 @@ class OpcUaConn:
         self.state = "disabled" if not rec.get("enabled", True) else "starting"
         self.error = None
         self.nodes, self.values, self.pending, self.stats = {}, {}, {}, {}
+        self.types = {}   # ObjectType name -> {"supertype", "description", "members", "properties"} (read by crawl)
         self.updates = 0
         self.connected_at = None
         self.server_info = {}
@@ -436,6 +437,7 @@ class OpcUaConn:
 
     async def crawl(self, client):
         dtype_names, nodes, order = {}, {}, []
+        type_ids = {}   # ObjectType browse name -> NodeId, for the type read after the walk
 
         async def dtype_name(nid):
             key = nid.to_string()
@@ -467,6 +469,11 @@ class OpcUaConn:
                     continue
                 info = {"id": key, "path": child_path, "name": name, "displayName": ref.DisplayName.Text or name,
                         "nodeClass": "Variable" if ref.NodeClass == ua.NodeClass.Variable else "Object", "parent": parent_id}
+                if ref.TypeDefinition is not None and not ref.TypeDefinition.is_null():
+                    tdn = await dtype_name(ref.TypeDefinition)   # same browse-name cache as the data types
+                    info["typeDefinition"] = tdn
+                    if info["nodeClass"] == "Object":
+                        type_ids.setdefault(tdn, ref.TypeDefinition)
                 nodes[key] = info
                 order.append(key)
                 child = client.get_node(nid)
@@ -497,7 +504,45 @@ class OpcUaConn:
                 await walk(child, child_path, key, depth + 1)
 
         await walk(client.nodes.objects, "", None, 0)
+        started = time.time()
+        self.types = await self.read_types(client, type_ids, dtype_name)
+        log.info("[%s] read %d object types in %.1fs", self.id, len(self.types), time.time() - started)
         return {k: nodes[k] for k in order}
+
+    async def read_types(self, client, type_ids, dtype_name):
+        """The ObjectTypes the browsed objects use: supertype, declared variables and child objects, properties."""
+        import hints
+        types = {}
+        for name, nid in list(type_ids.items())[:200]:
+            if name in hints.SKIP_TYPES:
+                continue
+            t = {"supertype": None, "description": None, "members": [], "properties": []}
+            node = client.get_node(nid)
+            try:
+                d = await node.read_description()
+                t["description"] = d.Text if d and d.Text else None
+                sup = await node.get_references(refs=ua.ObjectIds.HasSubtype, direction=ua.BrowseDirection.Inverse)
+                if sup:
+                    t["supertype"] = sup[0].BrowseName.Name
+                refs = await node.get_references(refs=ua.ObjectIds.HierarchicalReferences, direction=ua.BrowseDirection.Forward,
+                                                 nodeclassmask=ua.NodeClass.Object | ua.NodeClass.Variable, includesubtypes=True)
+                for r in refs[:200]:
+                    if r.ReferenceTypeId == ua.NodeId(ua.ObjectIds.HasProperty):
+                        t["properties"].append(r.BrowseName.Name)
+                        continue
+                    m = {"name": r.BrowseName.Name}
+                    if r.NodeClass == ua.NodeClass.Variable:
+                        try:
+                            m["dataType"] = await dtype_name(await client.get_node(r.NodeId).read_data_type())
+                        except Exception:  # noqa: BLE001
+                            pass
+                    elif r.TypeDefinition is not None and not r.TypeDefinition.is_null():
+                        m["type"] = await dtype_name(r.TypeDefinition)
+                    t["members"].append(m)
+            except Exception as e:  # noqa: BLE001
+                t["error"] = f"{type(e).__name__}: {e}"
+            types[name] = t
+        return types
 
     # subscription callbacks ---------------------------------------------
     def datachange_notification(self, node, val, data):

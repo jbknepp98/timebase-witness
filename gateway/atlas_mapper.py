@@ -26,6 +26,8 @@ from collections import defaultdict
 
 import anthropic
 
+import hints
+
 MODEL = os.environ.get("LOOKOUT_AGENT_MODEL", "claude-opus-5-5")
 EFFORT = os.environ.get("LOOKOUT_AGENT_EFFORT", "high")
 MAX_TURNS = int(os.environ.get("LOOKOUT_AGENT_MAX_TURNS", "12"))
@@ -246,8 +248,11 @@ class NamespaceView:
         for o in objects:
             v = [k for k in kids[o["id"]] if k["nodeClass"] == "Variable"]
             c = [k for k in kids[o["id"]] if k["nodeClass"] == "Object"]
-            tree.append({"path": o["path"], "depth": o["path"].count("/"), "childObjects": len(c), "variables": len(v),
-                         "variableNames": [k["name"] for k in v][:40]})
+            item = {"path": o["path"], "depth": o["path"].count("/"), "childObjects": len(c), "variables": len(v),
+                    "variableNames": [k["name"] for k in v][:40]}
+            if o.get("typeDefinition") and o["typeDefinition"] not in hints.SKIP_TYPES:
+                item["typeDefinition"] = o["typeDefinition"]
+            tree.append(item)
         dtypes = defaultdict(int)
         units = defaultdict(int)
         for v in variables:
@@ -271,6 +276,8 @@ class NamespaceView:
             "dataTypes": dict(dtypes),
             "units": dict(units),
             "observedForSeconds": round(time.time() - (st["connectedAt"] or time.time())),
+            "types": hints.summarize_types(hints.from_opcua(nodes, getattr(self.s, "types", {}) or {})),
+            "hintSources": ["opcua-typedefinition"],
         }
 
     def inspect(self, path):
@@ -293,7 +300,10 @@ class NamespaceView:
             })
             if len(out) >= 120:
                 break
-        return {"object": path, "nodeId": root["id"], "variables": out, "truncated": len(out) >= 120}
+        out_obj = {"object": path, "nodeId": root["id"], "variables": out, "truncated": len(out) >= 120}
+        if root.get("typeDefinition") and root["typeDefinition"] not in hints.SKIP_TYPES:
+            out_obj["typeDefinition"] = root["typeDefinition"]
+        return out_obj
 
 
 def security_text(st):

@@ -32,6 +32,7 @@ from aiohttp import web, WSMsgType
 
 import atlas_mapper
 import bridge_lookup
+import hints
 import payload_shapes
 import connections as cx
 
@@ -443,6 +444,13 @@ def mqtt_profile(conn):
     shapes = dict(inp["shapes"])
     excluded = sorted(t for t in shapes if payload_shapes.any_match(ex["filters"], t))
     kept = {t: sh for t, sh in shapes.items() if t not in set(excluded)}
+    # hints: metadata topics describe other topics and are never planned for logging
+    cache = {t: e for t, e in inp["cache"].items() if t in kept}
+    meta = hints.from_metadata_topics(cache, kept)
+    kept = {t: sh for t, sh in kept.items() if t not in meta["metadataTopics"]}
+    spbh = hints.from_sparkplug(inp["spb"].births())
+    signal_hints = hints.merge_signals(spbh["signals"], meta["signals"], hints.from_json_values(kept, cache))
+    types = meta["types"] + spbh["types"]
     by_shape = {}
     for sh in kept.values():
         by_shape[sh["shape"]] = by_shape.get(sh["shape"], 0) + 1
@@ -455,6 +463,12 @@ def mqtt_profile(conn):
         "groups": groups,
         "unsupported": [{"topic": t, "reason": sh["detail"].get("reason")} for t, sh in sorted(kept.items()) if sh["shape"] == "Unsupported"][:50],
         "exclusions": {**ex, "excludedTopics": len(excluded), "examples": excluded[:10]},
+        "metadata": {**meta["metadata"], "role": "hints only: these topics describe others and are not planned for logging"} if meta["metadata"] else None,
+        "types": hints.summarize_types(types),
+        "objectHints": {"count": len(meta["objects"]), "examples": dict(list(sorted(meta["objects"].items()))[:5])},
+        "signalHints": {"count": len(signal_hints), "withUnits": sum(1 for h in signal_hints.values() if h.get("units")),
+                        "conflicts": sum(1 for h in signal_hints.values() if h.get("conflicts"))},
+        "hintSources": sorted({h["source"] for h in types} | {src for h in signal_hints.values() for src in h["sources"]}),
         "observedValues": len(inp["stats"]), "statsTruncated": inp["statsTruncated"],
     }
 
