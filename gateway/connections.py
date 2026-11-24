@@ -25,6 +25,8 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import aiomqtt
+import bridge_lookup
+import payload_shapes
 import sparkplug
 from asyncua import Client, ua
 from asyncua.crypto import cert_gen, security_policies as sp
@@ -40,6 +42,8 @@ KEY_FILE = Path(os.environ.get("LOOKOUT_KEY_FILE", "/run/lookout/master.key"))
 PUBLISH_MS = int(os.environ.get("PUBLISH_MS", "500"))
 MAX_NODES = int(os.environ.get("MAX_NODES", "5000"))
 MQTT_CACHE_MAX = int(os.environ.get("MQTT_CACHE_MAX", "20000"))
+MQTT_STATS_MAX = int(os.environ.get("MQTT_STATS_MAX", "100000"))   # observed MQTT values (topics, JSON leaves, Sparkplug metrics)
+DEFAULT_HANDOFF_EXCLUDE = ["$SYS/#"]
 CLIENT_APP_URI = "urn:flow-software:lookout-gateway"
 
 POLICIES = {
@@ -50,6 +54,24 @@ POLICIES = {
 }
 MODES = {"Sign": ua.MessageSecurityMode.Sign, "SignAndEncrypt": ua.MessageSecurityMode.SignAndEncrypt}
 SECRET_FIELDS = {"mqtt": ("password", "clientKeyPem"), "opcua": ("password",)}
+
+
+def observe(stats, key, v, now=None):
+    """Running statistics for one observed value: update count, first/last time, min/max, distinct strings."""
+    now = now or time.time()
+    st = stats.get(key)
+    if st is None:
+        st = stats[key] = {"n": 0, "first": now, "last": now, "min": None, "max": None, "distinct": set(), "distinctOverflow": False}
+    st["n"] += 1
+    st["last"] = now
+    if isinstance(v, (bool, str)):
+        if len(st["distinct"]) < 20:
+            st["distinct"].add(str(v))
+        elif str(v) not in st["distinct"]:
+            st["distinctOverflow"] = True
+    elif isinstance(v, (int, float)):
+        st["min"] = v if st["min"] is None else min(st["min"], v)
+        st["max"] = v if st["max"] is None else max(st["max"], v)
 
 
 def now_iso():
@@ -242,7 +264,11 @@ def normalize(kind, body, existing=None):
                     "clientId": str(s.get("clientId") or "").strip(), "username": str(s.get("username") or "").strip(),
                     "tls": bool(s.get("tls")), "tlsVerify": s.get("tlsVerify", True) is not False,
                     "caPem": str(s.get("caPem") or "").strip(), "clientCertPem": str(s.get("clientCertPem") or "").strip(),
-                    "topics": topics, "includeSys": bool(s.get("includeSys", True))}
+                    "topics": topics, "includeSys": bool(s.get("includeSys", True)),
+                    "handoffExclude": lines(s["handoffExclude"]) if "handoffExclude" in s else list(old.get("handoffExclude", DEFAULT_HANDOFF_EXCLUDE))}
+        for t in settings["handoffExclude"]:
+            if "#" in t[:-1] or ("#" in t and not (t == "#" or t.endswith("/#"))):
+                errors["handoffExclude"] = f"'{t}' is not a valid filter: # may only be the last level."
         for f in ("caPem", "clientCertPem"):
             if settings[f] and "-----BEGIN CERTIFICATE-----" not in settings[f]:
                 errors[f] = "Paste a PEM certificate (it starts with -----BEGIN CERTIFICATE-----)."
@@ -489,20 +515,7 @@ class OpcUaConn:
         log.warning("[%s] subscription status change: %s", self.id, status)
 
     def observe(self, key, v):
-        now = time.time()
-        st = self.stats.get(key)
-        if st is None:
-            st = self.stats[key] = {"n": 0, "first": now, "last": now, "min": None, "max": None, "distinct": set(), "distinctOverflow": False}
-        st["n"] += 1
-        st["last"] = now
-        if isinstance(v, (bool, str)):
-            if len(st["distinct"]) < 20:
-                st["distinct"].add(str(v))
-            elif str(v) not in st["distinct"]:
-                st["distinctOverflow"] = True
-        elif isinstance(v, (int, float)):
-            st["min"] = v if st["min"] is None else min(st["min"], v)
-            st["max"] = v if st["max"] is None else max(st["max"], v)
+        observe(self.stats, key, v)
 
     # lifecycle ------------------------------------------------------------
     def start(self):
@@ -659,6 +672,20 @@ def mqtt_entry(message, spb=None):
     return e
 
 
+def spb_values(metrics, prefix=""):
+    """(name, value) for Sparkplug metrics, template members flattened as instance.member like Collector."""
+    for m in metrics:
+        name = m.get("name")
+        if not name:
+            continue
+        t = m.get("template")
+        if t is not None:
+            if not t.get("definition"):
+                yield from spb_values(t.get("metrics", []), f"{prefix}{name}.")
+        elif not isinstance(m.get("value"), (dict, list)):
+            yield prefix + name, m.get("value")
+
+
 def mqtt_url(s):
     scheme = ("wss" if s.get("tls") else "ws") if s.get("transport") == "websockets" else ("mqtts" if s.get("tls") else "mqtt")
     return f"{scheme}://{s['host']}:{s['port']}" + ((s.get("wsPath") or "/") if s.get("transport") == "websockets" else "")
@@ -676,6 +703,9 @@ class MqttConn:
         self.cache = {}
         self.pending = []
         self.spb = sparkplug.NodeSessions()   # Sparkplug B births, aliases and template definitions per Edge Node
+        self.stats = {}                       # observed values: topic, topic\x1fJSON leaf, or spb:<group/node[/device]>\x1fmetric
+        self.shapes = {}                      # topic -> payload shape of its latest message (payload_shapes.classify)
+        self.stats_truncated = False
         self.updates = 0
         self.connected_at = None
         self.tasks = []
@@ -704,11 +734,13 @@ class MqttConn:
                         await client.subscribe(t, qos=0)
                     self.connected_at = time.time()
                     self.spb = sparkplug.NodeSessions()   # a new connection starts every Sparkplug session afresh
+                    self.shapes = {}
                     self.set_state("connected")
                     backoff = 2
                     log.info("[%s] connected to %s", self.id, mqtt_url(self.rec["settings"]))
                     async for message in client.messages:
                         e = mqtt_entry(message, self.spb)
+                        self.observe_entry(e)
                         if e["p"] == "" and e["r"]:
                             self.cache.pop(e["t"], None)
                         elif e["t"] in self.cache or len(self.cache) < MQTT_CACHE_MAX:
@@ -736,10 +768,60 @@ class MqttConn:
                 "endpoint": mqtt_url(s), "state": self.state, "error": self.error, "user": s.get("username") or None,
                 "topics": mqtt_filters(s), "updates": self.updates, "connectedAt": self.connected_at,
                 "cachedTopics": len(self.cache), "security": {"tls": bool(s.get("tls")), "verify": s.get("tlsVerify", True),
-                                                             "clientCert": bool(s.get("clientCertPem"))}}
+                                                             "clientCert": bool(s.get("clientCertPem"))},
+                "handoffExclude": s.get("handoffExclude", DEFAULT_HANDOFF_EXCLUDE),
+                "bridgeExclude": bridge_lookup.bridge_excludes(s)}
 
     def snapshot(self):
         return {"type": "mqtt_snapshot", "conn": self.id, "msgs": list(self.cache.values())}
+
+    # observation for Handoffs ------------------------------------------
+    def _obs(self, key, v):
+        if key in self.stats or len(self.stats) < MQTT_STATS_MAX:
+            observe(self.stats, key, v)
+        else:
+            self.stats_truncated = True
+
+    def observe_entry(self, e):
+        """Record the message's shape and observe its values (never raises: observation must not stop the feed)."""
+        t = e["t"]
+        try:
+            sh = payload_shapes.classify(t, e)
+            if sh is None:
+                self.shapes.pop(t, None)
+                return
+            if t in self.shapes or len(self.shapes) < MQTT_CACHE_MAX:
+                self.shapes[t] = sh
+            kind = sh["shape"]
+            if kind == "Simple":
+                text = e["p"].strip()
+                typ = sh["detail"]["valueType"]
+                self._obs(t, float(text) if typ == "Double" else (text.lower() == "true" if typ == "Boolean" else text))
+            elif kind == "JsonValueObject":
+                self._obs(t, json.loads(e["p"])[sh["detail"]["valueField"]])
+            elif kind == "JsonRecord":
+                for path, v in payload_shapes.flatten(json.loads(e["p"])):
+                    self._obs(f"{t}\x1f{payload_shapes.path_text(path)}", v)
+            elif kind == "JsonMetricsArray":
+                d = sh["detail"]
+                arr = json.loads(e["p"])
+                for k in [x for x in d["arrayPath"].split(".") if x]:
+                    arr = arr[k]
+                for el in arr:
+                    self._obs(f"{t}\x1f{el.get(d['nameField'])}", el.get(d["valueField"]))
+            elif kind == "SparkplugB":
+                info = e["spb"]
+                scope = "/".join(x for x in (info.get("group"), info.get("node"), info.get("device")) if x)
+                for name, v in spb_values(json.loads(e["p"]).get("metrics", [])):
+                    self._obs(f"spb:{scope}\x1f{name}", v)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("[%s] could not observe %s: %s", self.id, t, exc)
+
+    def profile_inputs(self):
+        """Everything the Handoffs source model needs from this broker."""
+        return {"cache": self.cache, "stats": self.stats, "shapes": self.shapes, "spb": self.spb,
+                "connectedAt": self.connected_at, "statsTruncated": self.stats_truncated,
+                "exclude": bridge_lookup.effective_excludes(self.rec["settings"])}
 
     async def flusher(self):
         while True:

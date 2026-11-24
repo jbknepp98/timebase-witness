@@ -25,11 +25,14 @@ import json
 import logging
 import os
 import re
+import time
 import uuid
 
 from aiohttp import web, WSMsgType
 
 import atlas_mapper
+import bridge_lookup
+import payload_shapes
 import connections as cx
 
 log = logging.getLogger("lookout-gateway")
@@ -82,6 +85,10 @@ class Manager:
     def opcua(self, cid):
         c = self.conns.get(cid or "")
         return c if c and c.kind == "opcua" else None
+
+    def mqtt(self, cid):
+        c = self.conns.get(cid or "")
+        return c if c and c.kind == "mqtt" else None
 
     def statuses(self):
         return [c.status() for c in self.conns.values()]
@@ -428,11 +435,38 @@ async def agent_latest(request):
     return web.json_response({"brief": text, "collector": collector, "connect": connect, "artifact": entry, "domain": entry["domain"], "versions": entries})
 
 
+def mqtt_profile(conn):
+    """Broker profile for Handoffs: topics by payload shape, topic groups, exclusions (phase 3 form;
+    the common source model replaces the assembly later, the shape stays)."""
+    inp = conn.profile_inputs()
+    ex = inp["exclude"]
+    shapes = dict(inp["shapes"])
+    excluded = sorted(t for t in shapes if payload_shapes.any_match(ex["filters"], t))
+    kept = {t: sh for t, sh in shapes.items() if t not in set(excluded)}
+    by_shape = {}
+    for sh in kept.values():
+        by_shape[sh["shape"]] = by_shape.get(sh["shape"], 0) + 1
+    groups = payload_shapes.group_topics({t: sh for t, sh in kept.items() if sh["shape"] != "Unsupported"})
+    st = conn.status()
+    return {
+        "broker": {"name": st["name"], "endpoint": st["endpoint"], "user": st["user"], "security": st["security"]},
+        "observedForSeconds": round(time.time() - (inp["connectedAt"] or time.time())),
+        "topics": {"total": len(shapes), "excluded": len(excluded), "planned": len(kept), "byShape": by_shape},
+        "groups": groups,
+        "unsupported": [{"topic": t, "reason": sh["detail"].get("reason")} for t, sh in sorted(kept.items()) if sh["shape"] == "Unsupported"][:50],
+        "exclusions": {**ex, "excludedTopics": len(excluded), "examples": excluded[:10]},
+        "observedValues": len(inp["stats"]), "statsTruncated": inp["statsTruncated"],
+    }
+
+
 async def agent_profile(request):
     """Read-only: what the agent's tools return, without calling the model."""
+    broker = MANAGER.mqtt(request.query.get("server"))
+    if broker:
+        return web.json_response(mqtt_profile(broker), dumps=lambda o: json.dumps(o, default=str))
     server = MANAGER.opcua(request.query.get("server"))
     if not server:
-        return web.json_response({"error": "Unknown OPC UA server."}, status=404)
+        return web.json_response({"error": "Unknown connection."}, status=404)
     view = atlas_mapper.NamespaceView(server)
     path = request.query.get("path")
     return web.json_response(view.inspect(path) if path else view.profile(), dumps=lambda o: json.dumps(o, default=str))
@@ -450,6 +484,7 @@ async def info_handler(_request):
 
 async def on_startup(app):
     await MANAGER.start()
+    app["bridge_lookup"] = asyncio.get_event_loop().create_task(bridge_lookup.loop())
 
 
 async def on_cleanup(app):
