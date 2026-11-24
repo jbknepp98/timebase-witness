@@ -78,9 +78,10 @@ def from_metadata_topics(cache, topics=None):
     if not seg:
         return out
     i, name = seg
-    meta = {t: d for t, d in payloads.items() if len(t.split("/")) > i and t.split("/")[i] == name}
-    out["metadataTopics"] = set(meta)
-    data = topics - set(meta)
+    in_meta = lambda t: len(t.split("/")) > i + 1 and t.split("/")[i] == name  # noqa: E731
+    meta = {t: d for t, d in payloads.items() if in_meta(t)}
+    out["metadataTopics"] = {t for t in topics | set(cache) if in_meta(t)}   # non-JSON ones too (e.g. a status flag)
+    data = topics - out["metadataTopics"]
     anc = _ancestors(data)
     types = {}
     for t, d in meta.items():
@@ -104,7 +105,8 @@ def from_metadata_topics(cache, topics=None):
             if h:
                 out["signals"][path] = {**h, "source": "metadata-topic"}
         elif path in anc:
-            o = {"typeDefinition": d.get("typeDefinition"), "description": d.get("description") or None}
+            td = d.get("typeDefinition")
+            o = {"typeDefinition": td if td not in SKIP_TYPES else None, "description": d.get("description") or None}
             if isinstance(d.get("properties"), dict) and d["properties"]:
                 o["properties"] = d["properties"]
             out["objects"][path] = {k: v for k, v in o.items() if v not in (None, "")}

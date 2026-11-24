@@ -37,11 +37,13 @@ class HintTests(unittest.TestCase):
             "_meta/Plant/Line1/Speed": {"p": json.dumps({"dataType": "Double", "units": "bpm", "valueTopic": "Plant/Line1/Speed"})},
             "_meta/Plant/Line1/State": {"p": json.dumps({"dataType": "String", "valueTopic": "Plant/Line1/State"})},
             "Plant/Line1/Speed": {"p": json.dumps({"value": 1})}, "Plant/Line1/State": {"p": json.dumps({"value": "Run"})},
+            "_meta/_mirror/status": {"p": "online"},
         }
         h = hints.from_metadata_topics(cache)
         self.assertEqual(h["signals"]["Plant/Line1/Speed"]["units"], "bpm")
         self.assertEqual(h["objects"]["Plant"]["properties"], {"SiteCode": "DAL"})
         self.assertEqual({t["name"]: t["instances"] for t in h["types"]}, {"SiteType": ["Plant"]})
+        self.assertIn("_meta/_mirror/status", h["metadataTopics"])   # not JSON, still metadata
 
     def test_no_metadata(self):
         cache = {t: e for t, e in self.cache.items() if "_meta" not in t}
