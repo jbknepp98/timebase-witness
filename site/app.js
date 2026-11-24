@@ -1003,7 +1003,7 @@
   // right of the page, draggable by its header, label | value | info rows, Discard / Save in the header and
   // "N pending" + Delete in the footer. The page behind it stays usable.
   const DLG_DEFAULTS = {
-    mqtt: { host: '', port: 1883, transport: 'tcp', wsPath: '/', protocol: '3.1.1', clientId: '', username: '', tls: false, tlsVerify: true, caPem: '', clientCertPem: '', topics: ['#'], includeSys: true },
+    mqtt: { host: '', port: 1883, transport: 'tcp', wsPath: '/', protocol: '3.1.1', clientId: '', username: '', tls: false, tlsVerify: true, caPem: '', clientCertPem: '', topics: ['#'], includeSys: true, handoffExclude: ['$SYS/#'] },
     opcua: { endpoint: 'opc.tcp://', securityPolicy: 'None', securityMode: 'None', auth: 'anonymous', username: '', serverCertThumbprint: '', browseRoots: [], connector: '', publishMs: 500 },
   };
   let D = null;
@@ -1033,6 +1033,8 @@
     D = { id, kind, meta: list.meta, name: rec ? rec.name : '', enabled: rec ? rec.enabled !== false : true,
       settings: JSON.parse(JSON.stringify(rec ? rec.settings : DLG_DEFAULTS[kind])), secrets: {}, secretsSet: rec ? rec.secretsSet || {} : {},
       errors: {}, test: null, disc: null, busy: '', tip: null, pos };
+    // brokers saved before "Not for Handoffs" existed use the gateway's default; show it, not as a change
+    if (kind === 'mqtt' && !Array.isArray(D.settings.handoffExclude)) D.settings.handoffExclude = ['$SYS/#'];
     D.orig = snap();
     renderDialog();
     const first = document.querySelector('#modal [data-f="name"]'); if (first && !id) first.focus();
@@ -1114,7 +1116,18 @@
           ${secretInput('x.clientKeyPem', 'clientKeyPem', 'Client private key', { pem: true, opt: true, noun: 'private key', help: 'The private key for the client certificate. Stored encrypted.' })}` : ''}
       ${sec('Topics')}
         ${fld('Subscribe to', 'topics', `<textarea class="inp mono" rows="3" data-f="s.topics" data-list="1" spellcheck="false" placeholder="#">${esc((v.topics || []).join('\n'))}</textarea>`, { wide: true, help: 'One filter per line. <code>+</code> matches one level, <code>#</code> matches everything below. Witness only reads; it never publishes.' })}
-        ${toggle('$SYS statistics', 'includeSys', 's.includeSys', v.includeSys, 'Also subscribe to the broker\'s own $SYS statistics topics.')}`;
+        ${toggle('$SYS statistics', 'includeSys', 's.includeSys', v.includeSys, 'Also subscribe to the broker\'s own $SYS statistics topics.')}
+        ${fld('Not for Handoffs', 'handoffExclude', `<textarea class="inp mono" rows="2" data-f="s.handoffExclude" data-list="1" spellcheck="false" placeholder="$SYS/#">${esc((v.handoffExclude || []).join('\n'))}</textarea>`, { wide: true, opt: true, help: 'Topics Handoffs never plans for logging, one filter per line. Witness still shows them in Live and Namespace. Topics Timebase Bridge publishes are left out automatically, so Timebase\'s own output is not logged back into Historian.' })}
+        ${full(bridgeLine())}`;
+  }
+  function bridgeLine() {
+    const b = D && D.id ? BROKERS.find((x) => x.id === D.id) : null;
+    const br = b && b.status && b.status.bridgeExclude;
+    if (!br) return '<div class="ed-from">Topics Timebase Bridge publishes are also left out; the gateway shows which once the broker is saved.</div>';
+    const list = (br.filters || []).map((f) => `<code>${esc(f)}</code>`).join(', ');
+    return br.source === 'bridge'
+      ? `<div class="ed-from">Also left out, from Bridge: ${list || 'nothing (Bridge does not publish to this broker)'}</div>`
+      : `<div class="ed-from">Bridge not read (${/Pulse client/.test(br.reason || '') ? 'no Pulse client' : esc((br.reason || 'not yet').replace(/\.$/, ''))}), so ${list} is left out.</div>`;
   }
   function opcuaForm() {
     const v = D.settings; const cc = D.meta.clientCert || {};
@@ -1467,17 +1480,26 @@ Then follow the instructions at the top of the brief: run the model-domain skill
       agentItem({ type: 'error', message: `Could not reach the Witness gateway (${err.message}).` });
     }
   }
+  // a Handoffs source: an OPC UA server or an MQTT broker
+  function agentSource(id) {
+    const s = SERVERS.get(id); if (s) return { id, name: s.name, kind: 'ua', state: uaState(s) };
+    const b = BROKERS.find((x) => x.id === id); return b ? { id, name: b.name, kind: 'mqtt', state: b.conn } : null;
+  }
+  function brokerCarries(b) {
+    const top = CTX.mqtt.root.children.get(b.name);
+    return top && top.children.has('spBv1.0') ? 'MQTT · Sparkplug' : 'MQTT';
+  }
   function buildAtlasPage(page, titleRow) {
     const A = S.agent;
     const servers = [...SERVERS.values()];
-    if (!A.server && servers.length) A.server = servers[0].id;
-    const sel = SERVERS.get(A.server);
+    if (!agentSource(A.server)) A.server = servers.length ? servers[0].id : (BROKERS[0] ? BROKERS[0].id : null);
+    const sel = agentSource(A.server);
     if (!A.domain && sel) A.domain = `${sel.name}`.toLowerCase().replace(/[^a-z0-9]+/g, '-');
     const info = A.info || {};
-    page.innerHTML = `<header class="page-head"><div>${titleRow()}<p>An agent studies a server's namespace and plans its move into Timebase: a Collector instance that logs it to Historian, and an Atlas domain that Gage can build with types, hierarchy, instances and live bindings.</p></div>
+    page.innerHTML = `<header class="page-head"><div>${titleRow()}<p>An agent studies an OPC UA server or an MQTT broker and plans its move into Timebase: the Collector logging that historizes it, the Connect connector that serves it, and an Atlas domain that Gage can build with types, hierarchy, instances and live bindings.</p></div>
         <div class="stats">${stat('Model', info.model || '—')}${stat('Effort', info.effort || '—')}${stat('API key', info.keyConfigured === undefined ? '—' : info.keyConfigured ? 'Configured' : 'Missing')}</div></header>
       <div class="toolbar">
-        <label class="pick"><span class="dot ${sel ? dotFor(uaState(sel)) : ''}" id="agentSrcDot"></span><select class="inp" id="agentSrc" title="Namespace to map">${servers.length ? '' : '<option value="">No OPC UA servers</option>'}<optgroup label="OPC UA servers">${servers.map((s) => `<option value="${esc(s.id)}"${s.id === A.server ? ' selected' : ''}>${esc(s.name)}</option>`).join('')}</optgroup>${BROKERS.length ? `<optgroup label="MQTT brokers (not yet supported)">${BROKERS.map((b) => `<option disabled>${esc(b.name)}</option>`).join('')}</optgroup>` : ''}</select></label>
+        <label class="pick"><span class="dot ${sel ? dotFor(sel.state) : ''}" id="agentSrcDot"></span><select class="inp" id="agentSrc" title="Server or broker to plan">${servers.length || BROKERS.length ? '' : '<option value="">No connections</option>'}${servers.length ? `<optgroup label="OPC UA servers">${servers.map((s) => `<option value="${esc(s.id)}"${s.id === A.server ? ' selected' : ''}>${esc(s.name)} · OPC UA</option>`).join('')}</optgroup>` : ''}${BROKERS.length ? `<optgroup label="MQTT brokers">${BROKERS.map((b) => `<option value="${esc(b.id)}"${b.id === A.server ? ' selected' : ''}>${esc(b.name)} · ${brokerCarries(b)}</option>`).join('')}</optgroup>` : ''}</select></label>
         <label class="search" style="width:240px"><span class="ic-sm" style="left:12px;top:50%;transform:translateY(-50%);position:absolute;font:11px 'JetBrains Mono',monospace;color:var(--muted-fg)">domain</span><input id="agentDomain" value="${esc(A.domain)}" style="padding-left:64px" spellcheck="false"></label>
         <span class="spacer"></span>
         <button class="btn btn-primary" data-act="agentrun" id="agentRun">${icon('sparkles', 'ic-sm')}Plan the move</button>
@@ -1496,6 +1518,13 @@ Then follow the instructions at the top of the brief: run the model-domain skill
     A.dirty = true; renderAtlas();
     if (!A.info) loadAgentInfo();
     if (!A.brief && !A.running) loadLatestBrief();
+  }
+  function collectorMeta(col) {
+    const insts = col.instances || [{ name: col.name, type: 'OPCUA', tags: col.variablesLogged }];
+    const pill = (t) => `<span class="ho-pill">${esc(t)}</span>`;
+    if (insts.length === 1) return `Instance <code>${esc(insts[0].name)}</code>${pill(insts[0].type)} → dataset <code>${esc(col.dataset)}</code> · ${fmtNum(col.variablesLogged)} tags`;
+    return `${insts.length} instances → dataset <code>${esc(col.dataset)}</code> · ${fmtNum(col.variablesLogged)} tags
+      <span class="ho-insts">${insts.map((i) => `<span><code>${esc(i.name)}</code>${pill(i.type)} ${fmtNum(i.tags)} tags</span>`).join('')}</span>`;
   }
   function agentNote(page) {
     const A = S.agent; const st = $('#agentState'); if (!st) return;
@@ -1551,7 +1580,7 @@ Then follow the instructions at the top of the brief: run the model-domain skill
         const acts = (act, dls) => `<button class="btn btn-outline btn-sm" data-act="${act}">${icon('copy', 'ic-sm')}Copy Gage prompt</button><div class="ho-dl">${dls}</div>`;
         const missing = 'Not in this version. Select Plan again to add it.';
         ho.innerHTML = ready ? `
-          ${card('collector', 'database', 'Collector', 'Logs the server to Historian', col ? `Instance <code>${esc(col.name)}</code> → dataset <code>${esc(col.dataset)}</code> · ${fmtNum(col.variablesLogged)} tags` : missing,
+          ${card('collector', 'database', 'Collector', `Logs the ${agentSource(A.server) && agentSource(A.server).kind === 'mqtt' ? 'broker' : 'server'} to Historian`, col ? collectorMeta(col) : missing,
             col ? acts('agentcolprompt', dlBtn(col.file, '.md', 'Download the Collector handoff') + dlBtn(col.json, '.json', 'Download the Collector settings')) : '')}
           ${card('connect', 'plug', 'Connect', 'Serves the dataset to Atlas', con ? `Historian connector · dataset <code>${esc(con.dataset)}</code> · ${fmtNum(con.tagCount)} tags` : missing,
             con ? acts('agentconprompt', dlBtn(con.file, '.md', 'Download the Connect handoff') + dlBtn(con.json, '.json', 'Download the Connect settings')) : '')}
@@ -1572,7 +1601,7 @@ Then follow the instructions at the top of the brief: run the model-domain skill
       if (it.kind === 'done') return `<div class="ag-row ag-done">${icon('check', 'ic-sm')}<span>${esc(it.text)}</span></div>`;
       if (it.kind === 'error') return `<div class="ag-row ag-err">${icon('x', 'ic-sm')}<span>${esc(it.text)}</span></div>`;
       return '';
-    }).join('') : `<div class="tree-empty">${SERVERS.size ? 'Pick a server, name the domain, then select Plan the move. The agent reads the namespace through the Witness gateway and never writes to it, to Collector or to Atlas.' : 'No OPC UA servers are connected to the gateway.'}</div>`;
+    }).join('') : `<div class="tree-empty">${SERVERS.size || BROKERS.length ? 'Pick a server or broker, name the domain, then select Plan the move. The agent reads the source through the Witness gateway and never writes to it, to Collector, Connect or Atlas.' : 'No OPC UA servers or MQTT brokers are connected to the gateway.'}</div>`;
     if (nearBottom || A.running) log.scrollTop = log.scrollHeight;
     const showCol = A.handoff !== 'atlas' && !A.running;
     const src = !showCol ? (A.brief || A.draft) : A.handoff === 'connect' ? A.connect : A.collector;

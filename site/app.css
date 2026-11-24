@@ -361,7 +361,7 @@ pre.json { margin: 0; background: var(--card); border: 1px solid var(--border); 
 .pg-dots i.on { background: var(--tb-blue-500); }
 .ag-page { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .ag-page[hidden] { display: none; }
-@media (max-width: 700px) { .pager .pg-name, .pg-dots { display: none; } .pg-h { flex-wrap: wrap; } }
+@media (max-width: 700px) { .pager .pg-name, .pg-dots { display: none; } .pg-h { flex-wrap: wrap; } .ho-bar { flex-direction: column; } .ho-ver { margin-left: 0; align-items: flex-start; } }
 #agentLog { padding: 8px 0; overflow: auto; flex: 1; }
 .ag-row { display: grid; grid-template-columns: 16px 1fr; gap: 10px; padding: 7px 16px; font-size: 13px; line-height: 1.5; }
 .ag-row .ic-sm { margin-top: 3px; color: var(--muted-fg); }
@@ -469,6 +469,10 @@ select.inp { padding-right: 28px; }
 .ho-meta code { font-size: 11.5px; background: var(--input-surface); border: 1px solid var(--border); border-radius: 4px; padding: 0 5px; }
 .ho-acts { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin-top: auto; }
 .ho-dl { display: flex; gap: 2px; margin-left: -8px; }
+.ho-pill { font: 500 10.5px "JetBrains Mono", monospace; border: 1px solid var(--border); border-radius: 9999px; padding: 0 6px; margin-left: 4px; color: var(--muted-fg); white-space: nowrap; }
+.ho-insts { display: flex; flex-direction: column; gap: 2px; margin-top: 2px; }
+.ed-from { font-size: 12px; color: var(--muted-fg); line-height: 1.6; margin-top: -6px; }
+.ed-from code { font-size: 11.5px; background: var(--input-surface); border: 1px solid var(--border); border-radius: 4px; padding: 0 5px; }
 @media (max-width: 1300px) { .handoffs { grid-template-columns: minmax(0, 1fr); } }
 
 /* connection tab: namespace browser plus an optional Live messages window */

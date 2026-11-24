@@ -17,8 +17,8 @@ Witness is a browser app for exploring live MQTT brokers and OPC UA servers. It 
   - **Discover** lists a server's security policies and login types.
   - Supports Sign and SignAndEncrypt, certificate pinning, anonymous or user-name login, and limiting a connection to chosen branches.
 - **Secrets encrypted at rest.** Passwords and private keys are stored with Fernet encryption, using a key kept apart from the store. The browser only learns whether a secret is set, never its value. If no key is configured, Witness warns before anything is saved as plain text.
-- **Handoffs.** A Claude agent with read-only tools profiles an OPC UA namespace and produces:
-  - a **Collector handoff**: an OPCUA collector instance, checked against the live namespace, as Markdown plus a downloadable settings JSON;
+- **Handoffs.** A Claude agent with read-only tools profiles an OPC UA server or an MQTT broker (Sparkplug B included) and produces:
+  - a **Collector handoff**: one or more Collector instances (OPCUA, MQTT, SparkplugB) writing to one dataset. Witness checks them against what the source publishes and predicts every tag they write. Markdown plus a downloadable settings JSON;
   - a **Connect handoff**: a Timebase.Historian connector for that dataset, with a description of the dataset (tag naming, fields, data types, sample tags);
   - an **Atlas handoff**: a Domain Summary and source bindings through the Connect connector, which Gage in Atlas builds in Build mode.
 
@@ -73,5 +73,5 @@ There is an example Atlas handoff from the DemoPlant simulator in [examples/demo
 ## Status and limits
 
 - Witness has **no login yet**. Anyone who can open the page can add, edit or delete connections, though never read their secrets. Keep it on a trusted network.
-- The Handoffs page supports OPC UA. MQTT namespaces are not planned yet.
+- Handoffs can't log MQTT payloads that are neither JSON nor a single value (CSV, binary other than Sparkplug B). It lists them as open questions.
 - Witness was called Lookout until November 2026. Some internal names still use the old spelling because handoffs, certificates and volumes depend on them. These are the `lookout-gateway` network alias, the `LOOKOUT_*` variables, the `lookout-*` folders, and the OPC UA application URI `urn:flow-software:lookout-gateway`.

@@ -14,6 +14,30 @@ Connections are created with **Connections > Add connection** and edited with th
 | TLS | Optional CA certificate (PEM), optional client certificate and private key (PEM), and certificate verification on or off |
 | Topic filters | One per line, for example `Enterprise/SiteA/#` and `spBv1.0/+/DDATA/#`. Defaults to `#` |
 | `$SYS` statistics | Subscribes to the broker's statistics topics |
+| Not for Handoffs | Topics Handoffs never plans for logging, one filter per line. Defaults to `$SYS/#`. See below |
+
+### Not for Handoffs
+
+Handoffs leaves some topics out of the Collector plan. Live and Namespace still show them.
+
+- **The connection's own list.** Set it under **Topics → Not for Handoffs**. It holds `$SYS/#` by default.
+- **What Timebase Bridge publishes.** Bridge writes Atlas data back to MQTT. Logging it again with Collector would loop Timebase's own output into Historian.
+
+To find Bridge's topics, the gateway reads Bridge's MQTT instances every 10 minutes through Bridge's MCP endpoint, which accepts a Pulse token. It cuts each subscription's topic template at its first placeholder, so `timebase/bluebird-bev/[type.@name]/[instance.@name]` becomes `timebase/bluebird-bev/#`. These filters apply to broker connections whose host matches the Bridge instance's host. The editor shows them under the field.
+
+Without a Pulse client, or while the lookup fails, Handoffs leaves out `timebase/#` on every broker, and the editor says so. To turn the lookup on:
+
+1. Create a client-credentials client in Pulse with read access to Bridge.
+2. Mount the Pulse root CA in the gateway container.
+3. Set these in `deploy/agent.env`:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `WITNESS_PULSE_CLIENT_ID`, `WITNESS_PULSE_CLIENT_SECRET` | | The Pulse client. Keep the secret out of git |
+| `PULSE_URL` | `https://pulse:4542` | Pulse, where the gateway gets its token (`/auth/token`) |
+| `BRIDGE_URL` | `https://bridge:4572` | Bridge, read through `/mcp` |
+| `PULSE_CA_FILE` | | The Pulse root CA (PEM), to verify both |
+| `BRIDGE_LOOKUP_SECONDS` | `600` | How often Bridge is read |
 
 ## OPC UA
 

@@ -29,6 +29,8 @@ A connection tab shows only that connection. The header shows the name, type, se
 
 The left panel is the namespace browser. It is labelled **Namespace** for MQTT and **Address space** for OPC UA. Select a topic or node to see its value, type, quality, timestamp and a short trend in the detail panel on the right.
 
+Sparkplug B payloads are decoded by the gateway. The detail panel shows them as JSON, with a **Sparkplug B · NBIRTH** (or DBIRTH, DDATA and so on) label in place of **JSON**. Data messages show metric names: the gateway fills them in from the births, even when the message sends only aliases. A payload that can't be decoded is shown as base64, labelled **Sparkplug B (not decodable)**, with the reason.
+
 The button in the top-right corner of the browser panel expands the tree to the full width of the tab and hides the detail panel. Select it again, or press `Esc`, to restore the split. Each tab remembers its own selection, filter and expanded state when you switch tabs.
 
 ### Copying from payloads

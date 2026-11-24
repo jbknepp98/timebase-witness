@@ -36,10 +36,11 @@ Connect a WebSocket to `/api/stream/ws` (`/api/opcua/ws` is an alias). The gatew
 | Method | Path | Notes |
 | --- | --- | --- |
 | GET | `/api/agent/info` | Model, effort, whether an API key is configured, and the OPC UA servers available |
-| GET | `/api/agent/profile?server=<id>[&path=<object>]` | What the agent's tools see, without calling the model |
-| POST | `/api/agent/runs` | Starts a run for `{server, domain?}` and returns the run id. Answers 409 while a run for that server is already in progress |
+| GET | `/api/agent/profile?server=<id>[&path=<object>]` | What the agent's tools see, without calling the model. Works for OPC UA servers and MQTT brokers. For brokers it adds topic groups with payload shapes, unsupported topics, exclusions, metadata and hints |
+| POST | `/api/agent/validate` | Checks a Collector plan without calling the model. Body: `{server, plan}`, where `plan` is `{dataset, instances: [{plugin, name, subscriptions}]}` (or the older one-instance OPC UA form). Returns the report (problems, warnings, predicted tag counts), the generated settings for each instance (never a password) and every predicted tag |
+| POST | `/api/agent/runs` | Starts a run for `{server, domain?}` on an OPC UA server or an MQTT broker, and returns the run id. Answers 409 while a run for that server is already in progress |
 | GET | `/api/agent/runs/{run}/events` | Server-sent events: progress, tool calls, and the result |
-| GET | `/api/agent/latest?server=<id>[&file=<name>]` | The latest (or named) Collector, Connect and Atlas handoffs for a server, with the version list |
+| GET | `/api/agent/latest?server=<id>[&file=<name>]` | The latest (or named) Collector, Connect and Atlas handoffs for a connection, with the version list. `artifact.collector.instances` lists each Collector instance with its plugin and tag count |
 | GET | `/briefs/` | Saved handoff files |
 | GET | `/briefs/{name}` | One handoff (`.md` or `.json`). Add `?download=1` to download it |
 

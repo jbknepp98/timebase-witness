@@ -33,9 +33,12 @@ The gateway runs as uid 1000, so these folders must be writable by it (`chown -R
 | `PUBLISH_MS` | `500` | Default OPC UA publishing interval |
 | `MAX_NODES` | `5000` | Most OPC UA nodes browsed per server |
 | `MQTT_CACHE_MAX` | `20000` | Most retained MQTT topics per broker |
+| `MQTT_STATS_MAX` | `100000` | Most MQTT values (topics, JSON leaves, Sparkplug metrics) observed per broker for Handoffs |
 | `OPCUA_SERVERS`, `MQTT_BROKERS` | | Seed connections as JSON. Read only on first start, when there is no `connections.json` yet. See `deploy/gateway.env.example` |
 
-The Handoffs variables are listed in [Handoffs](handoffs.md#settings).
+The Handoffs variables are listed in [Handoffs](handoffs.md#settings). The Bridge lookup variables (Pulse client) are in [Connections and security](connections-and-security.md#not-for-handoffs).
+
+`tools/probe/` holds a throwaway MQTT broker and fixture publisher, used to check Collector's tag naming against a real Collector. It runs as its own compose project (`witness-probe`) on the Timebase network. See `tools/probe/README.md`.
 
 ## Creating the encryption key
 
