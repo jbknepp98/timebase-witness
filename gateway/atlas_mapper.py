@@ -59,16 +59,16 @@ ATLAS_VOCABULARY = {
     },
 }
 
-SYSTEM_PROMPT = """You are the Witness namespace mapper for Timebase. You study the live address space of an industrial OPC UA server and write a modeling brief that Gage, the Timebase Atlas assistant, can build into an Atlas domain without interviewing anyone.
+PROMPT_CORE = """You are the Witness namespace mapper for Timebase. You study the live data of an industrial source - an OPC UA server, or an MQTT broker that may carry Sparkplug B - and write a modeling brief that Gage, the Timebase Atlas assistant, can build into an Atlas domain without interviewing anyone.
 
 ## How Gage will use your brief
 Gage runs its model-domain pipeline: architect (plans the ontology from a Domain Summary), builder (creates types), mapper (writes .map.json instance maps with property bindings), reviewer (compiles and checks). Your Domain Summary replaces Gage's interview, so it must use Gage's exact Domain Summary format. Your Source Bindings section is what Gage's mapper uses to bind each property to live data.
 
 ## Work method
-1. Call get_namespace_profile first. It lists the object tree, repeated patterns (objects that share the same set of variables) and observed values.
+1. Call get_namespace_profile first. It lists the object tree, repeated patterns (objects that share the same set of variables), types the source declares (`types`), and observed values. For a broker it also lists topic groups with their payload shape and what is left out.
 2. Call inspect_branch on representative objects (one per pattern, plus anything unusual) to see each variable's data type, units, writability, description and observed values. Do not inspect every object when a pattern already covers it.
 3. Call get_atlas_vocabulary once to see which shared types to reuse.
-4. Call propose_collector_instance with the logging plan (see "Collector instance" below). It answers with how many variables each subscription matches and sample tag names; if it reports problems, fix them and call it again.
+4. Call propose_collector_instance with the Collector plan (see "Collector plan" below). Witness checks it and predicts every Historian tag it will write; if it reports problems, fix them and call it again.
 5. Write the brief. Stop calling tools once you have what you need: be efficient, a typical server needs 4-7 tool calls.
 
 ## Modeling rules (from Gage's architect)
@@ -76,27 +76,19 @@ Gage runs its model-domain pipeline: architect (plans the ontology from a Domain
 - Objects that share the same variable set are one Entity Type, derived from the ISA-95 level they sit at (process equipment such as tanks, pasteurizers, boilers -> isa95-equipment:Unit; discrete stations such as fillers, cappers, conveyors -> isa95-equipment:WorkCell; plant -> Site; functional groupings such as Processing/Packaging/Utilities -> Area or a WorkCenter, say which and why). Name types in PascalCase without instance numbers (MixTank, not MixTank101). Name properties in PascalCase too, keeping the server's browse name where it is already a good name (LevelPct, TempSetpointC); relationships are camelCase.
 - Variables that are configuration rather than measurement (setpoints, writable values) are still TVQ properties when they come from the server; say they are setpoints in the note.
 - String variables whose observed values form a small closed set (states such as Filling/Mixing/Draining) are candidates for an Enumeration Type: list the observed values and say the list may be incomplete.
-- Units come from EngineeringUnits or a trailing [unit] in the description. Record them as a static UOM-style property only if the type needs it; otherwise put the unit in the property note.
+- Types the source declares are the strongest evidence for entity types: OPC UA TypeDefinitions, Sparkplug B templates, and types from metadata topics, all listed in the profile's `types` with their members and instances. Name the entity type after the declared type without a `Type` suffix (AirCompressorType -> AirCompressor), keep its members as properties, use static properties from object hints (`hint.properties`, e.g. SiteCode) as static properties, and say in Mapping Notes where a declared type and the observed signals disagree.
+- Units come from EngineeringUnits, a trailing [unit] in the description, Sparkplug engUnit or metadata topics. Record them as a static UOM-style property only if the type needs it; otherwise put the unit in the property note.
 - Only real hierarchy uses containment. Use the ISA-95 level relationships (siteContains, areaContains, productionUnitContains, productionLineContains) where they fit. When a level is missing, narrow `isa95-equipment:equipmentContains` and name the new relationship for its containing level (e.g. `areaContainsUnit`), never after a verb unrelated to the hierarchy and never after both endpoints.
 - Simulator or diagnostic nodes (heartbeats, counters about the server itself) are not plant equipment: list them under Open Questions or leave them out and say so.
 - Never invent equipment, variables or values that are not in the namespace. If something is ambiguous, put it in Open Questions.
 - Do not raise connection credentials or security settings as open questions: the profile states the user and security policy the gateway connects with, and the Prerequisites section should repeat them.
 - The profile says how long Witness has observed the server. State lists and value ranges come only from that window: say so where it matters, without guessing at values you did not see.
 
-## Collector instance
-Besides the Atlas brief you plan a Timebase Collector OPC UA instance that logs this server's live measurements into Timebase Historian. Witness fills in the connection (URL, user, security) itself; you decide only:
-- name: the Collector instance name, PascalCase, e.g. DemoPlantOpcUa.
-- dataset: the Historian dataset to write to, PascalCase, normally the same as the name.
-- subscriptions: usually one. topics are dot-joined browse paths from under Objects with `+` (one level) and `#` (everything below, last only), e.g. `DemoPlant.#` or `DemoPlant.Processing.#`. Cover exactly the branches the profile shows; do not reach outside them.
-- topicDefinition: dot-delimited lowercase names for the leading path segments, matching the hierarchy you found, e.g. `plant.area.equipment.signal`. It must have as many segments as the typical variable path.
-- fields: metadata on every tag. Use `[Topic:key]` placeholders for the hierarchy levels (Plant, Area, Equipment...) and a constant Source naming the server product.
-- excludeRegex: a case-sensitive regex on the tag name (the dot-joined path) for variables that should not be historized: static nameplate or configuration values that never changed during observation, and simulator or server diagnostics. Use "" when everything should be logged. Setpoints that operators change are kept.
-- intervalMs: publishing interval, normally 1000.
-- notes: short bullets a reviewer should check (what you excluded and why, anything uncertain).
+{SOURCE}
 
 ## Binding paths
-Atlas never reads the server directly. The data path is: the Collector instance you propose historizes the server into a Timebase Historian dataset, a Timebase Connect Historian connector serves that dataset, and Atlas binds through that connector. A binding path is `{CONNECTOR}/{DATASET}/{TagName}` where TagName is the Historian tag name, which is the dot-joined browse path from under Objects, e.g. `{CONNECTOR}/{DATASET}/DemoPlant.Processing.MixTank101.LevelPct`. The tools give you each variable's binding path; write `{CONNECTOR}` and `{DATASET}` literally - Witness fills in the dataset from your Collector plan, and the connector id exists only after Gage creates the connector. For a series of instances, write one binding template per property using the instance-map column placeholder, e.g. `{CONNECTOR}/{DATASET}/DemoPlant.Processing.[Unit].LevelPct`.
-Only variables your Collector plan logs exist in Historian. Never bind a property to a variable your excludeRegex removes: leave such a property out of the model, or keep it unbound and say so in Mapping Notes.
+Atlas never reads the source directly. The data path is: the Collector plan you propose historizes the source into one Timebase Historian dataset, a Timebase Connect Historian connector serves that dataset, and Atlas binds through that connector. A binding path is `{CONNECTOR}/{DATASET}/<Historian tag name>`. Witness predicts every tag name from your Collector plan: inspect_branch gives each signal's `bindingPath` (before your plan passes it assumes default settings; once propose_collector_instance passes it is exact, and signals your plan does not log have `bindingPath` null and `logged` false). The passing plan's report also gives `bindingExamples`. Write `{CONNECTOR}` and `{DATASET}` literally - Witness fills in the dataset, and the connector id exists only after Gage creates the connector. For a series of instances, write one binding template per property using the instance-map column placeholder in place of the part that varies, e.g. `{CONNECTOR}/{DATASET}/DemoPlant.Processing.[Unit].LevelPct` or `{CONNECTOR}/{DATASET}/Plant1/Line1/[Device]/Motor1.Speed`.
+Only signals your Collector plan logs exist in Historian. Never bind a property to a signal the plan leaves out: leave such a property out of the model, or keep it unbound and say so in Mapping Notes.
 
 ## Output
 Reply with the brief only, as Markdown, with exactly these top-level sections in this order (no preamble):
@@ -112,12 +104,49 @@ Written for Gage's mapper, which authors every definition as a map (one-item map
 - Then the single root instance (a plain definition with no map).
 
 # Prerequisites Outside Atlas
-What must exist before mapper's bindings resolve: the Collector instance logging into the dataset, and the Connect Historian connector serving it (Witness writes handoffs for both, so just name them in order); anything else you found.
+What must exist before mapper's bindings resolve: the Collector instance(s) logging into the dataset, and the Connect Historian connector serving it (Witness writes handoffs for both, so just name them in order); anything else you found.
 
 # Mapping Notes
 Up to 8 bullets on decisions a reviewer should check (type choices, skipped nodes, enum candidates, anything that looked inconsistent).
 
 Do not repeat the Collector plan in the brief: Witness writes the Collector handoff from your propose_collector_instance call."""
+
+SOURCE_OPCUA = """## Collector plan
+Besides the Atlas brief you plan the Timebase Collector logging that historizes this server's live measurements: one instance with plugin `OPCUA`. Witness fills in the connection (URL, user, security) itself; you decide only:
+- dataset: the Historian dataset to write to, PascalCase, normally the same as the instance name.
+- the instance: plugin `OPCUA`, name in PascalCase (e.g. DemoPlantOpcUa), notes (short bullets a reviewer should check: what you excluded and why, anything uncertain).
+- subscriptions: usually one. topics are dot-joined browse paths from under Objects with `+` (one level) and `#` (everything below, last only), e.g. `DemoPlant.#` or `DemoPlant.Processing.#`. Cover exactly the branches the profile shows; do not reach outside them.
+- topicDefinition: dot-delimited lowercase names for the leading path segments, matching the hierarchy you found, e.g. `plant.area.equipment.signal`. It must have as many segments as the typical variable path.
+- fields: metadata on every tag. Use `[Topic:key]` placeholders for the hierarchy levels (Plant, Area, Equipment...) and a constant Source naming the server product.
+- excludeRegex: a case-sensitive regex on the tag name (the dot-joined path) for variables that should not be historized: static nameplate or configuration values that never changed during observation, and simulator or server diagnostics. Use "" when everything should be logged. Setpoints that operators change are kept.
+- intervalMs: publishing interval, normally 1000.
+Tag names are the dot-joined browse path, e.g. `DemoPlant.Processing.MixTank101.LevelPct`."""
+
+SOURCE_BROKER = """## Collector plan
+Besides the Atlas brief you plan the Timebase Collector logging that historizes this broker: one or more instances, all writing to the same Historian dataset. Plain MQTT topics need an instance with plugin `MQTT`; Sparkplug B (`spBv1.0/...`) needs a separate instance with plugin `SparkplugB`. Witness fills in the broker connection itself and never exports a password; you decide:
+- dataset: the Historian dataset, PascalCase (e.g. PlantMqtt).
+- instances: name in PascalCase per instance (e.g. PlantMqtt, PlantSparkplug), plugin, subscriptions, notes (short bullets a reviewer should check).
+
+MQTT subscriptions (topics are slash-delimited MQTT filters with `+` and `#`):
+- The profile's `groups` are topic groups that share a payload shape and settings. Propose one subscription per group, or one per branch that covers several groups with the same shape. Topics on the connection's "Not for Handoffs" list (e.g. what Timebase Bridge publishes, $SYS) and metadata topics are already left out; never plan them.
+- type: Simple (bare values), JsonStructured (value objects, or arrays of name/value metrics), JsonSimple (other JSON records). Leave type and the payload fields (valueField, qualityField, uomFields, timestampFields, timestampType, tagnameFields, tagnameIncludesTopic) out unless you have a reason: Witness fills them in from the detected shape.
+- tagnameDelimiter: leave it out (Witness uses `.`, so tag names are dot-joined like OPC UA browse paths). ignoreParts: literal text removed from every tag name, after the delimiter is applied, e.g. `probe.structured.` to drop a fixed topic prefix.
+- topicDefinition: slash-delimited lowercase names for the leading topic levels, e.g. `enterprise/site/area/equipment/signal`; fields use `[Topic:key]` for hierarchy levels, `[Payload:path]` only when the payload carries identity, plus a constant Source.
+- excludeRegex: case-sensitive regex on the tag name for signals not worth historizing (diagnostics, simulator heartbeats, static values that never change).
+- JSON Simple drops array keys and indexes, so records with arrays of objects make tag names collide. Witness reports collisions as problems: fix them (exclude the array with excludeRegex, or plan those topics differently) - never leave them.
+- Unsupported topics (not JSON and not a single value) cannot be logged; mention them under Open Questions.
+
+Sparkplug B subscriptions (plugin SparkplugB):
+- topics: `spBv1.0/<group>/#`, one per Sparkplug group you plan. Tag names and fields are automatic: `Group/Node[/Device]/<metric>` with the metric's folders, template members `<instance>.<member>`, fields GroupID, NodeID, DeviceID and Template*.
+- Decide only excludeRegex, ignoreParts (e.g. `Group/Node/` to shorten names) and includeHousekeeping (keep it on: written commands let setpoints be compared with process values).
+- Sparkplug templates are entity types: use the template's name, members, parameters and nesting."""
+
+
+def system_prompt(kind):
+    return PROMPT_CORE.replace("{SOURCE}", SOURCE_OPCUA if kind == "opcua" else SOURCE_BROKER)
+
+
+SYSTEM_PROMPT = system_prompt("opcua")
 
 TOOLS = [
     {
@@ -141,33 +170,53 @@ TOOLS = [
     },
     {
         "name": "propose_collector_instance",
-        "description": "Propose the Timebase Collector OPC UA instance that logs this server into Historian. Witness validates the topics and exclusion filter against the namespace and answers with matched and excluded variable counts and sample tag names. Call again with fixes if it reports problems.",
+        "description": "Propose the Timebase Collector plan that historizes this source: the Historian dataset and one or more Collector instances (plugin OPCUA, MQTT or SparkplugB) with their subscriptions. Witness fills in payload settings you leave out from the detected shapes, checks the plan against what the source publishes, and predicts every tag it will write (names, data types, units). It answers with problems to fix, warnings, predicted tag counts, sample tags and binding examples. Call again with fixes if it reports problems.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "name": {"type": "string", "description": "Collector instance name, PascalCase"},
                 "dataset": {"type": "string", "description": "Historian dataset name, PascalCase"},
-                "subscriptions": {
+                "instances": {
                     "type": "array",
                     "items": {
                         "type": "object",
                         "properties": {
-                            "topics": {"type": "array", "items": {"type": "string"}, "description": "Dot-joined browse paths with + and # wildcards"},
-                            "topicDefinition": {"type": "string", "description": "Dot-delimited names for the leading path segments"},
-                            "intervalMs": {"type": "integer", "description": "Publishing interval in ms"},
-                            "excludeRegex": {"type": "string", "description": "Case-sensitive regex on the tag name; empty for none"},
-                            "fields": {"type": "array", "items": {"type": "object", "properties": {"name": {"type": "string"}, "value": {"type": "string"}}, "required": ["name", "value"], "additionalProperties": False}},
+                            "plugin": {"type": "string", "enum": ["OPCUA", "MQTT", "SparkplugB"]},
+                            "name": {"type": "string", "description": "Collector instance name, PascalCase"},
+                            "subscriptions": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "topics": {"type": "array", "items": {"type": "string"}, "description": "OPCUA: dot-joined browse paths; MQTT/SparkplugB: slash-delimited topic filters; + and # wildcards"},
+                                        "topicDefinition": {"type": "string", "description": "Names for the leading path levels (OPCUA dot-delimited, MQTT slash-delimited)"},
+                                        "fields": {"type": "array", "items": {"type": "object", "properties": {"name": {"type": "string"}, "value": {"type": "string"}}, "required": ["name", "value"]}},
+                                        "excludeRegex": {"type": "string", "description": "Case-sensitive regex on the tag name; empty for none"},
+                                        "intervalMs": {"type": "integer", "description": "OPCUA only: publishing interval in ms"},
+                                        "type": {"type": "string", "enum": ["Simple", "JsonSimple", "JsonStructured"], "description": "MQTT only; leave out to use the detected shape"},
+                                        "ignoreParts": {"type": "array", "items": {"type": "string"}},
+                                        "tagnameDelimiter": {"type": "string"},
+                                        "tagnameIncludesTopic": {"type": "boolean"},
+                                        "tagnameFields": {"type": "array", "items": {"type": "string"}},
+                                        "timestampFields": {"type": "array", "items": {"type": "string"}},
+                                        "timestampType": {"type": "string", "enum": ["String", "UNIXSeconds", "UNIXMilliseconds"]},
+                                        "valueField": {"type": "string"},
+                                        "qualityField": {"type": "string"},
+                                        "uomFields": {"type": "array", "items": {"type": "string"}},
+                                        "includeHousekeeping": {"type": "boolean", "description": "SparkplugB only"},
+                                        "includeTransient": {"type": "boolean", "description": "SparkplugB only"},
+                                    },
+                                    "required": ["topics"],
+                                },
+                            },
+                            "notes": {"type": "array", "items": {"type": "string"}},
                         },
-                        "required": ["topics", "topicDefinition", "intervalMs", "excludeRegex", "fields"],
-                        "additionalProperties": False,
+                        "required": ["plugin", "name", "subscriptions"],
                     },
                 },
                 "notes": {"type": "array", "items": {"type": "string"}},
             },
-            "required": ["name", "dataset", "subscriptions", "notes"],
-            "additionalProperties": False,
+            "required": ["dataset", "instances"],
         },
-        "strict": True,
         "eager_input_streaming": True,
     },
     {
@@ -181,6 +230,8 @@ TOOLS = [
 
 from source_model import UNIT_RE, clean_description, security_text, units_of  # noqa: E402,F401  (shared helpers)
 import adapters  # noqa: E402
+import collector_plan  # noqa: E402
+import handoff_text  # noqa: E402
 from collector_plan import (COLLECTOR_POLICY, HISTORIAN_HOST, HISTORIAN_PORT, HISTORIAN_TLS, NAME_RE,  # noqa: E402,F401
                             collector_instance, connect_plan, tag_fields, topic_matches, validate_collector)
 
@@ -211,8 +262,8 @@ class NamespaceView:
 
 
 # ---------------------------------------------------------------------- Collector handoff
-def collector_brief(server, inst, settings_url):
-    st = server.status()
+def opcua_section(inst, settings_url):
+    """One OPCUA instance in the Collector handoff (handoff_text.collector_brief)."""
     settings_json = json.dumps({"Settings": inst["Settings"]}, indent=2)
     pw = ("Ask the user for the OPC UA password and set `Password` in the settings yourself: Witness never exports it."
           if inst["needsPassword"] else "The server is read anonymously, so no password is needed.")
@@ -222,9 +273,7 @@ def collector_brief(server, inst, settings_url):
              ("`AutoAcceptUntrusted` is on because Witness accepts this server's certificate without pinning it. Make sure the server trusts Collector's application certificate."
               if inst["Settings"]["SecurityPolicy"] != "None" else "The channel is unencrypted (security policy None)."))
     notes = "\n".join(f"- {n}" for n in inst["notes"]) or "- None"
-    return f"""> **For Gage in Collector:** use the **setup-collector** skill to create a new **OPCUA** collector instance from this handoff. Everything below was checked by Witness against the live namespace of `{st['name']}`; do not ask the user for settings that are given here.
-
-# Collector Instance: {inst['name']}
+    return f"""## 1. Collector Instance: {inst['name']} (OPCUA)
 
 | Setting | Value |
 |---|---|
@@ -235,95 +284,31 @@ def collector_brief(server, inst, settings_url):
 | Variables logged | {inst['variablesLogged']} |
 | Settings file | {settings_url} |
 
-## Steps
+### Steps
 1. `AddCollector` with type **OPCUA**, then `RenameCollector` to `{inst['name']}` and set the description above.
 2. `UpdateCollectorSettings` with the settings below. {pw}
 3. {trust}
 4. `ListHistorians`, then `SetCollectorHistorians` to link the Historian with dataset `{inst['historian']['dataset']}`.
 5. `StartCollector`, wait 10 seconds, then check `GetLogs` and `GetPreviewSnapshot`. Expect about {inst['variablesLogged']} tags.
 
-## Settings
+### Settings
 ```json
 {settings_json}
 ```
 
-## Notes from Witness
+### Notes from Witness
 {notes}
-"""
-
-
-# ---------------------------------------------------------------------- Connect handoff
-def connect_brief(server, plan, settings_url):
-    st = server.status()
-    ds = plan["dataset"]
-    settings_json = json.dumps({"Settings": plan["Settings"]}, indent=2)
-    types = ", ".join(f"{k} {v}" for k, v in sorted(plan["dataTypes"].items(), key=lambda kv: -kv[1])) or "none"
-    units = ", ".join(f"`{k}` ({v})" for k, v in sorted(plan["units"].items(), key=lambda kv: -kv[1])[:15]) or "none reported by the server"
-    blocks = []
-    for grp in plan["fields"]:
-        rows = "\n".join(f"| `{f['name']}` | {f['distinct']} | {', '.join(f'`{e}`' for e in f['examples'])}{' ...' if f['distinct'] > len(f['examples']) else ''} |" for f in grp["fields"]) or "| (none) | | |"
-        topics = ", ".join(f"`{t}`" for t in grp["topics"])
-        blocks.append(f"Tags from {topics} ({grp['tags']} tags, topic definition `{grp['topicDefinition']}`):\n\n| Field | Distinct values | Examples |\n|---|---|---|\n{rows}")
-    fields = "\n\n".join(blocks)
-    sample_rows = []
-    for smp in plan["samples"]:
-        sample_rows.append(f"\n**{smp['example']}** - {smp['objects']} object{'s log' if smp['objects'] != 1 else ' logs'} this set of signals\n\n| Tag name | Server data type | Units | Binding path |\n|---|---|---|---|")
-        for t in smp["tags"]:
-            sample_rows.append(f"| `{t['name']}` | {t['dataType']} | {t['units'] or ''} | `{{CONNECTOR}}/{ds}/{t['name']}` |")
-    samples = "\n".join(sample_rows)
-    return f"""> **For Gage in Connect:** use the **configure-historian-connector** skill to serve the Historian dataset `{ds}` to Atlas through a **Timebase.Historian** connector. Everything below was worked out by Witness from the Collector plan for `{st['name']}`; do not ask the user for settings that are given here.
-
-# Connect Historian Connector: {ds}
-
-| Setting | Value |
-|---|---|
-| Plugin type | Timebase.Historian |
-| Suggested name | `{plan['name']}` |
-| Historian | `{plan['Settings']['Host']}:{plan['Settings']['Port']}` ({'TLS' if plan['Settings']['UseTls'] else 'no TLS'}), signing in as this Connect host |
-| Dataset entry | key `{ds}` -> dataset `{ds}` |
-| Filled by | Collector instance `{plan['collector']}` (Collector handoff) |
-| Expected tags | {plan['tagCount']} |
-| Settings file | {settings_url} |
-
-## Steps
-1. The dataset is written by the Collector instance `{plan['collector']}`. If it is not logging yet, set it up from the Collector handoff first: until it runs, the catalog below is empty.
-2. `ListConnectors`. If a **Timebase.Historian** connector already reads this Historian, add the `{ds}` entry under its `Datasets` instead of creating a second connector, and use that connector's id below.
-3. Otherwise `AddConnector` with type **Timebase.Historian**, rename it to `{plan['name']}`, and `UpdateConnectorSettings` with the settings below.
-4. Make sure the connector is enabled for the Atlas that will hold the domain, then `StartConnector`.
-5. Wait 10 seconds, then `TestConnector`, `GetLogs` and `GetConnector`. Read the catalog path `<connector id>/{ds}`: expect about {plan['tagCount']} tags named as below.
-6. Report the connector id. The Atlas handoff's bindings start with `{{CONNECTOR}}/{ds}/`, and Gage in Atlas needs that id for `{{CONNECTOR}}`.
-
-## Settings
-```json
-{settings_json}
-```
-
-## What the dataset looks like
-
-**Tag names** are the server's browse path from under Objects, joined with dots, up to {plan['maxDepth']} segments, e.g. `{plan['samples'][0]['tags'][0]['name'] if plan['samples'] else 'Plant.Area.Equipment.Signal'}`.
-
-**Per-tag binding path** through this connector: `<connector id>/{ds}/<tag name>`. Only per-tag paths can be subscribed; `<connector id>/{ds}` is the catalog (one row per tag).
-
-**Fields** Collector writes on each tag. Every Collector subscription has its own topic definition, so each one's tags carry their own set:
-
-{fields}
-
-**Data types** (as the server reports them): {types}.
-
-**Units**: {units}.
-
-## Sample tags
-{samples}
 """
 
 
 def preface(server, domain):
     st = server.status()
+    kind = "OPC UA server" if server.kind == "opcua" else "MQTT broker"
     bind = ("For **mapper**, use the Source Bindings section. Atlas reads the historized data through Connect: replace `{CONNECTOR}` with the id of "
             "the Timebase.Historian connector set up from the Connect handoff (ask the user for it if you do not have it). "
             "The Collector and Connect handoffs must be done first, or the bindings will not resolve.")
     return f"""> **For Gage:** use the **model-domain** skill in **Build** mode for a new domain named `{domain}`.
-> The Domain Summary below was drafted by Witness from the live OPC UA server `{st['name']}` ({st['endpoint']}) and reviewed by the user - treat it as the confirmed interview output and **skip Step 1**.
+> The Domain Summary below was drafted by Witness from the live {kind} `{st['name']}` ({st['endpoint']}) and reviewed by the user - treat it as the confirmed interview output and **skip Step 1**.
 > Hand the Domain Summary to **architect**, then **builder**. {bind} Then run **reviewer** post-change.
 
 """
@@ -347,7 +332,8 @@ def summarize_result(name, result):
     if name == "propose_collector_instance":
         if result.get("problems"):
             return f"{len(result['problems'])} problem(s): {result['problems'][0]}"
-        return f"{result['variablesLogged']} of {result['variablesInNamespace']} variables logged"
+        n = len(result.get("instances") or [])
+        return f"{result.get('tagsPredicted', 0)} tags predicted for dataset {result.get('dataset')}" + (f" from {n} instances" if n > 1 else "")
     return "isa95-equipment and atlas-common types"
 
 
@@ -363,7 +349,11 @@ class MapRun:
         self.cond = asyncio.Condition()
         self.done = False
         self.brief = None
-        self.collector = None      # Collector instance plan once propose_collector_instance passes
+        self.kind = server.kind
+        self.name = server.rec["name"]
+        self.collector = None      # passing Collector plan: {"dataset", "instances": [settings documents], "tagsPredicted"}
+        self.owner = {}            # predicted tag -> where it comes from (collector_plan.validate)
+        self.tags = {}             # signal source key -> predicted tag (handoff_text.tag_index)
         self.connect = None        # Connect Historian connector plan, derived from the Collector plan
         self.nudged = False
         self.started = time.time()
@@ -380,19 +370,36 @@ class MapRun:
         if name == "inspect_branch":
             if not isinstance(args, dict) or not isinstance(args.get("path"), str):
                 raise ValueError("inspect_branch needs a string 'path'")
-            return self.view.inspect(args["path"])
+            return self.with_plan_bindings(self.view.inspect(args["path"]))
         if name == "get_atlas_vocabulary":
             return ATLAS_VOCABULARY
         if name == "propose_collector_instance":
             if not isinstance(args, dict):
                 raise ValueError("propose_collector_instance needs an object")
-            report, problems = validate_collector(self.server, args)
-            owner = report.pop("_owner")
-            if not problems:
-                self.collector = collector_instance(self.server, args, report)
-                self.connect = connect_plan(self.server, self.collector, owner)
+            r = collector_plan.validate(self.server, args)
+            report = r["report"]
+            if not r["problems"]:
+                plan = collector_plan.to_v2(args)
+                self.collector = {"dataset": plan["dataset"], "instances": r["instances"], "tagsPredicted": report["tagsPredicted"]}
+                self.owner, self.tags = r["owner"], handoff_text.tag_index(r["owner"])
+                self.connect = handoff_text.connect_plan(self.view.model(), self.collector, self.owner)
+                report["bindingExamples"] = [{"object": smp["example"], "type": smp.get("type"),
+                                              "bindings": [f"{{CONNECTOR}}/{{DATASET}}/{t['name']}" for t in smp["tags"][:4]]}
+                                             for smp in self.connect["samples"][:6]]
             return report
         raise ValueError(f"unknown tool {name}")
+
+    def with_plan_bindings(self, res):
+        """Once a plan passes, each signal's binding uses the tag name the plan predicts (null when not logged)."""
+        if not self.tags or "variables" not in res:
+            return res
+        prefix = "{CONNECTOR}/{DATASET}/"
+        for row in res["variables"]:
+            default = (row.get("bindingPath") or "")[len(prefix):]
+            tag = self.tags.get(handoff_text.signal_key({"origin": row.get("origin"), "tag": default}))
+            row["bindingPath"] = prefix + tag if tag else None
+            row["logged"] = bool(tag)
+        return res
 
     async def run(self):
         try:
@@ -416,12 +423,16 @@ class MapRun:
         if not os.environ.get("ANTHROPIC_API_KEY") and not os.environ.get("ANTHROPIC_AUTH_TOKEN"):
             await self.emit({"type": "error", "message": "No Anthropic API key is configured for the Witness gateway. Add ANTHROPIC_API_KEY to ~/mosquitto/lookout-agent.env on the Mini and recreate the gateway."})
             return
-        if self.server.state != "connected" or not self.server.nodes:
-            await self.emit({"type": "error", "message": f"{self.server.cfg['name']} is not connected, so there is no namespace to map."})
+        what = "OPC UA server" if self.kind == "opcua" else "MQTT broker"
+        if self.server.state != "connected":
+            await self.emit({"type": "error", "message": f"{self.name} is not connected, so there is nothing to map."})
+            return
+        if not self.view.model().signals():
+            await self.emit({"type": "error", "message": f"Nothing to plan on {self.name}: no signals yet, or every topic is excluded or metadata. Let Witness watch it for a few minutes."})
             return
         client = anthropic.AsyncAnthropic()
-        await self.emit({"type": "status", "text": f"Mapping {self.server.cfg['name']} with {MODEL}"})
-        messages = [{"role": "user", "content": f"Plan moving the OPC UA server `{self.server.cfg['name']}` into Timebase: an Atlas domain named `{self.domain}` and a Collector instance that logs it to Historian. Investigate with the tools, propose the Collector instance, then write the brief."}]
+        await self.emit({"type": "status", "text": f"Mapping {self.name} with {MODEL}"})
+        messages = [{"role": "user", "content": f"Plan moving the {what} `{self.name}` into Timebase: an Atlas domain named `{self.domain}` and the Collector logging that historizes it. Investigate with the tools, propose the Collector plan, then write the brief."}]
         usage = {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}
         retries = 0
         for turn in range(MAX_TURNS):
@@ -429,7 +440,7 @@ class MapRun:
                 async with client.beta.messages.stream(
                     model=MODEL,
                     max_tokens=64000,
-                    system=SYSTEM_PROMPT,
+                    system=system_prompt(self.kind),
                     tools=TOOLS,
                     messages=messages,
                     thinking={"type": "adaptive", "display": "summarized"},
@@ -471,13 +482,13 @@ class MapRun:
                 self.nudged = True
                 await self.emit({"type": "status", "text": "Asking for the Collector plan before finishing"})
                 messages.append({"role": "assistant", "content": response.content})
-                messages.append({"role": "user", "content": "Before the brief is final, call propose_collector_instance with the Collector logging plan. Then reply with the full brief again."})
+                messages.append({"role": "user", "content": "Before the brief is final, call propose_collector_instance with the Collector plan until it passes. Then reply with the full brief again, with bindings that use the tag names it predicts."})
                 continue
             if not tool_uses:
                 text = "".join(b.text for b in response.content if b.type == "text").strip()
                 if response.stop_reason == "max_tokens":
                     await self.emit({"type": "status", "text": "The brief hit the output limit and may be cut off."})
-                self.brief = finish(self.server, self.domain, text, self.collector and self.collector["historian"]["dataset"])
+                self.brief = finish(self.server, self.domain, text, self.collector and self.collector["dataset"])
                 artifact = None
                 if self.on_brief:
                     try:

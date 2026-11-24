@@ -33,6 +33,7 @@ from aiohttp import web, WSMsgType
 import adapters
 import atlas_mapper
 import collector_plan
+import handoff_text
 import bridge_lookup
 import hints
 import payload_shapes
@@ -304,7 +305,7 @@ def save_brief(run):
         f"domain: {run.domain}",
         f"version: {version}",
         f"source: {st['name']} ({st['endpoint']})",
-        f"bindings: Connect Historian connector for dataset {run.collector['historian']['dataset'] if run.collector else 'none'}",
+        f"bindings: Connect Historian connector for dataset {run.collector['dataset'] if run.collector else 'none'}",
         f"generated: {created}",
         f"model: {atlas_mapper.MODEL}",
         f"url: {entry['url']}",
@@ -315,21 +316,25 @@ def save_brief(run):
     for fn in (name, f"{run.domain}.md"):
         write_atomic(fn, text)
     if run.collector:
-        inst = run.collector
+        col = run.collector
+        insts = col["instances"]
         base = f"{run.domain}-collector"
         md_name, json_name = f"{base}-v{version}.md", f"{base}-v{version}.json"
         json_url = f"{INTERNAL_URL}/briefs/{json_name}"
-        settings_text = json.dumps({"Settings": inst["Settings"]}, indent=2) + "\n"
-        c_header = "\n".join(["---", "lookout_collector_handoff: 1", f"instance: {inst['name']}", f"dataset: {inst['historian']['dataset']}",
-                               f"version: {version}", f"source: {st['name']} ({st['endpoint']})", f"generated: {created}",
-                               f"url: {INTERNAL_URL}/briefs/{md_name}", "---", ""])
-        c_text = c_header + atlas_mapper.collector_brief(run.server, inst, json_url).rstrip() + "\n"
+        settings_text = json.dumps({"dataset": col["dataset"], "instances": [
+            {"name": i["name"], "type": i["type"], "dataset": col["dataset"], "Settings": i["Settings"]} for i in insts]}, indent=2) + "\n"
+        c_header = "\n".join(["---", "lookout_collector_handoff: 2", f"instances: {', '.join(i['name'] + ' (' + i['type'] + ')' for i in insts)}",
+                               f"dataset: {col['dataset']}", f"version: {version}", f"source: {st['name']} ({st['endpoint']})",
+                               f"generated: {created}", f"url: {INTERNAL_URL}/briefs/{md_name}", "---", ""])
+        c_text = c_header + handoff_text.collector_brief(st["name"], col, json_url, atlas_mapper.opcua_section).rstrip() + "\n"
         for fn in (md_name, f"{base}.md"):
             write_atomic(fn, c_text)
         for fn in (json_name, f"{base}.json"):
             write_atomic(fn, settings_text)
+        counts = [i.get("tagsPredicted", i.get("variablesLogged", 0)) for i in insts]
         entry["collector"] = {"file": md_name, "url": f"{INTERNAL_URL}/briefs/{md_name}", "json": json_name, "jsonUrl": json_url,
-                              "name": inst["name"], "dataset": inst["historian"]["dataset"], "variablesLogged": inst["variablesLogged"]}
+                              "name": insts[0]["name"], "dataset": col["dataset"], "variablesLogged": sum(counts),
+                              "instances": [{"name": i["name"], "type": i["type"], "tags": n} for i, n in zip(insts, counts)]}
     if run.connect:
         plan = run.connect
         base = f"{run.domain}-connect"
@@ -338,11 +343,11 @@ def save_brief(run):
         n_header = "\n".join(["---", "lookout_connect_handoff: 1", f"connector: {plan['name']}", f"dataset: {plan['dataset']}",
                                f"version: {version}", f"source: {st['name']} ({st['endpoint']})", f"generated: {created}",
                                f"url: {INTERNAL_URL}/briefs/{md_name}", "---", ""])
-        n_text = n_header + atlas_mapper.connect_brief(run.server, plan, json_url).rstrip() + "\n"
+        n_text = n_header + handoff_text.connect_brief(st["name"], plan, json_url).rstrip() + "\n"
         for fn in (md_name, f"{base}.md"):
             write_atomic(fn, n_text)
         for fn in (json_name, f"{base}.json"):
-            write_atomic(fn, json.dumps({"Settings": plan["Settings"]}, indent=2) + "\n")
+            write_atomic(fn, json.dumps({"Settings": plan["Settings"], "predictedTags": plan["predictedTags"]}, indent=2) + "\n")
         entry["connect"] = {"file": md_name, "url": f"{INTERNAL_URL}/briefs/{md_name}", "json": json_name, "jsonUrl": json_url,
                             "name": plan["name"], "dataset": plan["dataset"], "tagCount": plan["tagCount"]}
     index.append(entry)
@@ -378,9 +383,9 @@ async def agent_start(request):
         body = await request.json()
     except Exception:  # noqa: BLE001
         body = {}
-    server = MANAGER.opcua(body.get("server"))
+    server = MANAGER.conns.get(str(body.get("server") or ""))
     if not server:
-        return web.json_response({"error": "Unknown OPC UA server."}, status=404)
+        return web.json_response({"error": "Unknown connection."}, status=404)
     domain = re.sub(r"[^a-z0-9-]+", "-", str(body.get("domain") or server.id).lower()).strip("-") or "lookout-domain"
     if any(not r.done and r.server is server for r in RUNS.values()):
         return web.json_response({"error": "A mapping run for this server is already in progress."}, status=409)
