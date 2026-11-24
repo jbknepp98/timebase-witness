@@ -108,3 +108,13 @@ Data that arrives before a birth is dropped, and Collector publishes an NCMD `No
 | `PUT /app/collectors/{id}/historians {historians: [{id, dataset}]}` | Sets the historian links |
 | `PATCH /app/collectors/{id}/active {active}` | Switches the instance on or off |
 | `DELETE /app/collectors/{id}` | Deletes the instance. Stop it first |
+
+## Connect and Atlas: binding paths for tag names that contain `/` (checked 2026-11-24)
+
+Atlas's connector catalog (`GET /app/connectors/catalog` in the Atlas web app) describes how each Connect data source can be bound:
+- **Timebase.Historian:** the catalog path is `<connector>/<Dataset>`. The per-tag template is `<connector>/<Dataset>/[Tag:path]`, and its parameter type is **`path`**.
+- **PostgreSQL:** its templates use `[Name:string]` parameters for single values.
+
+A `path` parameter takes the rest of the binding, `/` included. So a Sparkplug tag such as `ProbeGroup/Gateway1/Filler01/Pump1.Motor.Speed` binds verbatim as `<connector>/<Dataset>/ProbeGroup/Gateway1/Filler01/Pump1.Motor.Speed`.
+
+Not yet confirmed: a live value read through such a binding. That needs an Atlas domain that maps it (phase 9, or Gage's first real build).

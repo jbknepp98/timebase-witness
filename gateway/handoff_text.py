@@ -141,7 +141,7 @@ def connect_brief(source_name, plan, settings_url):
 2. `ListConnectors`. If a **Timebase.Historian** connector already reads this Historian, add the `{ds}` entry under its `Datasets` instead of creating a second connector, and use that connector's id below.
 3. Otherwise `AddConnector` with type **Timebase.Historian**, rename it to `{plan['name']}`, and `UpdateConnectorSettings` with the settings below.
 4. Make sure the connector is enabled for the Atlas that will hold the domain, then `StartConnector`.
-5. Wait 10 seconds, then `TestConnector`, `GetLogs` and `GetConnector`. Read the catalog path `<connector id>/{ds}`: expect about {plan['tagCount']} tags named as below. If a tag name contains `/`, check how the catalog shows its per-tag path and tell the user.
+5. Wait 10 seconds, then `TestConnector`, `GetLogs` and `GetConnector`. Read the catalog path `<connector id>/{ds}`: expect about {plan['tagCount']} tags named as below. The per-tag template is `<connector id>/{ds}/[Tag:path]`; a `path` parameter takes tag names with `/` as they are.
 6. Report the connector id. The Atlas handoff's bindings start with `{{CONNECTOR}}/{ds}/`, and Gage in Atlas needs that id for `{{CONNECTOR}}`.
 
 ## Settings
