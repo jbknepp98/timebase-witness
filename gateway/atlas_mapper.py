@@ -179,19 +179,8 @@ TOOLS = [
     },
 ]
 
-UNIT_RE = re.compile(r"\[([^\]]+)\]\s*$")
-
-
-def units_of(info):
-    if info.get("units"):
-        return info["units"]
-    m = UNIT_RE.search(info.get("description") or "")
-    return m.group(1) if m else None
-
-
-def clean_description(info):
-    d = UNIT_RE.sub("", info.get("description") or "").strip()
-    return d if d and d not in (info.get("name"), info.get("displayName")) else None
+from source_model import UNIT_RE, clean_description, security_text, units_of  # noqa: E402,F401  (shared helpers)
+import adapters  # noqa: E402
 
 
 def tag_name(info):
@@ -204,113 +193,19 @@ def binding_path(info):
 
 
 class NamespaceView:
-    """Read-only view over one ServerConn for the profiler and the tools."""
+    """What the agent's tools read: the source model of one connection (OPC UA server or MQTT broker)."""
 
     def __init__(self, server):
         self.s = server
 
-    def _children(self):
-        kids = defaultdict(list)
-        for n in self.s.nodes.values():
-            kids[n.get("parent")].append(n)
-        return kids
-
-    def var_stats(self, nid):
-        st = self.s.stats.get(nid)
-        if not st:
-            return {}
-        span = max(1e-6, st["last"] - st["first"])
-        out = {"updates": st["n"], "ratePerMin": round(st["n"] / span * 60, 2) if st["n"] > 1 else 0}
-        if st["min"] is not None:
-            out["min"], out["max"] = st["min"], st["max"]
-        if st["distinct"]:
-            out["distinctValues"] = sorted(st["distinct"])[:20]
-            if st["distinctOverflow"]:
-                out["distinctValuesTruncated"] = True
-        return out
+    def model(self):
+        return adapters.build(self.s)
 
     def profile(self):
-        nodes = self.s.nodes
-        kids = self._children()
-        objects = [n for n in nodes.values() if n["nodeClass"] == "Object"]
-        variables = [n for n in nodes.values() if n["nodeClass"] == "Variable"]
-
-        def signature(obj):
-            vs = sorted((k["name"], k.get("dataType", "?")) for k in kids[obj["id"]] if k["nodeClass"] == "Variable")
-            return tuple(vs)
-
-        patterns = defaultdict(list)
-        for o in objects:
-            sig = signature(o)
-            if sig:
-                patterns[sig].append(o["path"])
-        tree = []
-        for o in objects:
-            v = [k for k in kids[o["id"]] if k["nodeClass"] == "Variable"]
-            c = [k for k in kids[o["id"]] if k["nodeClass"] == "Object"]
-            item = {"path": o["path"], "depth": o["path"].count("/"), "childObjects": len(c), "variables": len(v),
-                    "variableNames": [k["name"] for k in v][:40]}
-            if o.get("typeDefinition") and o["typeDefinition"] not in hints.SKIP_TYPES:
-                item["typeDefinition"] = o["typeDefinition"]
-            tree.append(item)
-        dtypes = defaultdict(int)
-        units = defaultdict(int)
-        for v in variables:
-            dtypes[v.get("dataType", "?")] += 1
-            u = units_of(v)
-            if u:
-                units[u] += 1
-        st = self.s.status()
-        return {
-            "server": {"name": st["name"], "endpoint": st["endpoint"], "product": st["serverInfo"], "user": st["user"],
-                       "security": security_text(st)},
-            "browseRoots": st.get("browseRoots") or "everything under Objects",
-            "bindingPathTemplate": "{CONNECTOR}/{DATASET}/{dot-joined browse path under Objects}",
-            "dataPath": "Collector historizes the server into the dataset you propose; a Connect Historian connector serves it to Atlas. Keep {CONNECTOR} and {DATASET} literal.",
-            "totals": {"objects": len(objects), "variables": len(variables), "writableVariables": sum(1 for v in variables if v.get("writable"))},
-            "objectTree": tree,
-            "repeatedPatterns": [
-                {"objects": paths, "count": len(paths), "variables": [f"{n}:{t}" for n, t in sig]}
-                for sig, paths in sorted(patterns.items(), key=lambda kv: -len(kv[1]))
-            ],
-            "dataTypes": dict(dtypes),
-            "units": dict(units),
-            "observedForSeconds": round(time.time() - (st["connectedAt"] or time.time())),
-            "types": hints.summarize_types(hints.from_opcua(nodes, getattr(self.s, "types", {}) or {})),
-            "hintSources": ["opcua-typedefinition"],
-        }
+        return self.model().profile()
 
     def inspect(self, path):
-        path = path.strip().strip("/").replace(".", "/")
-        root = next((n for n in self.s.nodes.values() if n["path"] == path), None)
-        if not root:
-            close = [n["path"] for n in self.s.nodes.values() if n["nodeClass"] == "Object" and path.lower() in n["path"].lower()][:10]
-            return {"error": f"No node at '{path}'.", "didYouMean": close}
-        out = []
-        for n in self.s.nodes.values():
-            if n["nodeClass"] != "Variable" or not (n["path"] == path or n["path"].startswith(path + "/")):
-                continue
-            val = self.s.values.get(n["id"], {})
-            out.append({
-                "browsePath": n["path"], "nodeId": n["id"], "bindingPath": binding_path(n),
-                "dataType": n.get("dataType"), "units": units_of(n), "writable": bool(n.get("writable")),
-                "description": clean_description(n),
-                "value": val.get("v"), "quality": (val.get("q") or {}).get("name"),
-                "observed": self.var_stats(n["id"]),
-            })
-            if len(out) >= 120:
-                break
-        out_obj = {"object": path, "nodeId": root["id"], "variables": out, "truncated": len(out) >= 120}
-        if root.get("typeDefinition") and root["typeDefinition"] not in hints.SKIP_TYPES:
-            out_obj["typeDefinition"] = root["typeDefinition"]
-        return out_obj
-
-
-def security_text(st):
-    sec = st.get("security") or {}
-    if (sec.get("policy") or "None") == "None":
-        return "None (unencrypted channel)" + (" with a user name and password" if st.get("user") else ", anonymous")
-    return f"{sec['policy']} / {sec.get('mode')}" + (" with the server certificate pinned" if sec.get("pinned") else "") + (f", user {st['user']}" if st.get("user") else ", anonymous")
+        return self.model().inspect(path)
 
 
 # ---------------------------------------------------------------------- Collector handoff

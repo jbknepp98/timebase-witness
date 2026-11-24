@@ -30,6 +30,7 @@ import uuid
 
 from aiohttp import web, WSMsgType
 
+import adapters
 import atlas_mapper
 import bridge_lookup
 import hints
@@ -436,54 +437,14 @@ async def agent_latest(request):
     return web.json_response({"brief": text, "collector": collector, "connect": connect, "artifact": entry, "domain": entry["domain"], "versions": entries})
 
 
-def mqtt_profile(conn):
-    """Broker profile for Handoffs: topics by payload shape, topic groups, exclusions (phase 3 form;
-    the common source model replaces the assembly later, the shape stays)."""
-    inp = conn.profile_inputs()
-    ex = inp["exclude"]
-    shapes = dict(inp["shapes"])
-    excluded = sorted(t for t in shapes if payload_shapes.any_match(ex["filters"], t))
-    kept = {t: sh for t, sh in shapes.items() if t not in set(excluded)}
-    # hints: metadata topics describe other topics and are never planned for logging
-    cache = {t: e for t, e in inp["cache"].items() if t in kept}
-    meta = hints.from_metadata_topics(cache, kept)
-    kept = {t: sh for t, sh in kept.items() if t not in meta["metadataTopics"]}
-    spbh = hints.from_sparkplug(inp["spb"].births())
-    signal_hints = hints.merge_signals(spbh["signals"], meta["signals"], hints.from_json_values(kept, cache))
-    types = meta["types"] + spbh["types"]
-    by_shape = {}
-    for sh in kept.values():
-        by_shape[sh["shape"]] = by_shape.get(sh["shape"], 0) + 1
-    groups = payload_shapes.group_topics({t: sh for t, sh in kept.items() if sh["shape"] != "Unsupported"})
-    st = conn.status()
-    return {
-        "broker": {"name": st["name"], "endpoint": st["endpoint"], "user": st["user"], "security": st["security"]},
-        "observedForSeconds": round(time.time() - (inp["connectedAt"] or time.time())),
-        "topics": {"total": len(shapes), "excluded": len(excluded), "planned": len(kept), "byShape": by_shape},
-        "groups": groups,
-        "unsupported": [{"topic": t, "reason": sh["detail"].get("reason")} for t, sh in sorted(kept.items()) if sh["shape"] == "Unsupported"][:50],
-        "exclusions": {**ex, "excludedTopics": len(excluded), "examples": excluded[:10]},
-        "metadata": {**meta["metadata"], "role": "hints only: these topics describe others and are not planned for logging"} if meta["metadata"] else None,
-        "types": hints.summarize_types(types),
-        "objectHints": {"count": len(meta["objects"]), "examples": dict(list(sorted(meta["objects"].items()))[:5])},
-        "signalHints": {"count": len(signal_hints), "withUnits": sum(1 for h in signal_hints.values() if h.get("units")),
-                        "conflicts": sum(1 for h in signal_hints.values() if h.get("conflicts"))},
-        "hintSources": sorted({h["source"] for h in types} | {src for h in signal_hints.values() for src in h["sources"]}),
-        "observedValues": len(inp["stats"]), "statsTruncated": inp["statsTruncated"],
-    }
-
-
 async def agent_profile(request):
-    """Read-only: what the agent's tools return, without calling the model."""
-    broker = MANAGER.mqtt(request.query.get("server"))
-    if broker:
-        return web.json_response(mqtt_profile(broker), dumps=lambda o: json.dumps(o, default=str))
-    server = MANAGER.opcua(request.query.get("server"))
-    if not server:
+    """Read-only: what the agent's tools return, without calling the model (any connection)."""
+    conn = MANAGER.conns.get(request.query.get("server") or "")
+    if not conn:
         return web.json_response({"error": "Unknown connection."}, status=404)
-    view = atlas_mapper.NamespaceView(server)
+    model = adapters.build(conn)
     path = request.query.get("path")
-    return web.json_response(view.inspect(path) if path else view.profile(), dumps=lambda o: json.dumps(o, default=str))
+    return web.json_response(model.inspect(path) if path else model.profile(), dumps=lambda o: json.dumps(o, default=str))
 
 
 async def agent_info(_request):
